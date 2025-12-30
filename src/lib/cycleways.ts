@@ -15,52 +15,55 @@ export async function fetchCycleways(): Promise<Cycleway[]> {
     
     const cycleways: Cycleway[] = [];
     
-    // Parse the XML structure to extract cycleways
-    // The data contains cycling infrastructure with coordinates
-    const features = xmlDoc.querySelectorAll('cyclewayFacility, CyclewayFacility, member');
+    // The XML uses namespaces, so we need to use getElementsByTagNameNS or parse by local name
+    const linearElements = xmlDoc.querySelectorAll('linearElement');
     
-    if (features.length === 0) {
-      // Fallback: parse as raw text and extract data patterns
-      const rawData = xmlText;
-      const patterns = rawData.matchAll(/Ποδηλατική Υποδομή[^<]*([\d.]+)/g);
+    linearElements.forEach((element, index) => {
+      // Get name - look for value element inside name
+      const nameElement = element.querySelector('name value');
+      let name = nameElement?.textContent || `Cycleway ${index + 1}`;
       
-      // Extract meaningful segments from the XML
-      const segments = rawData.split('Ποδηλατική Υποδομή');
+      // Clean up the name - remove prefix if present
+      name = name.replace('Ποδηλατική Υποδομή-', '').trim();
       
-      segments.forEach((segment, index) => {
-        if (index === 0) return; // Skip first empty segment
+      // Get language
+      const langElement = element.querySelector('name lang');
+      const language = langElement?.textContent || 'el';
+      
+      // Get ID
+      const idElement = element.querySelector('id');
+      const id = idElement?.textContent || `cycleway-${index}`;
+      
+      // Get coordinates from pointCoordinates
+      const coordElements = element.querySelectorAll('pointCoordinates');
+      const coordinates: [number, number][] = [];
+      
+      coordElements.forEach((coord) => {
+        const latEl = coord.querySelector('latitude');
+        const lngEl = coord.querySelector('longitude');
         
-        const nameMatch = segment.match(/^-?([^<\d]+)/);
-        const name = nameMatch ? nameMatch[1].trim().replace(/^-/, '').trim() : `Cycleway ${index}`;
-        
-        // Extract coordinates (pairs of lat/lng)
-        const coordMatches = segment.matchAll(/(3[45]\.[\d]+)/g);
-        const coords: number[] = [];
-        for (const match of coordMatches) {
-          coords.push(parseFloat(match[1]));
-        }
-        
-        // Group coordinates into pairs [lat, lng]
-        const coordinates: [number, number][] = [];
-        for (let i = 0; i < coords.length - 1; i += 2) {
-          const lat = coords[i];
-          const lng = coords[i + 1];
+        if (latEl && lngEl) {
+          const lat = parseFloat(latEl.textContent || '0');
+          const lng = parseFloat(lngEl.textContent || '0');
+          
+          // Validate coordinates are in Cyprus region
           if (lat >= 34 && lat <= 36 && lng >= 32 && lng <= 35) {
             coordinates.push([lng, lat]); // GeoJSON uses [lng, lat]
           }
         }
-        
-        if (coordinates.length >= 2) {
-          cycleways.push({
-            id: `cycleway-${index}`,
-            name: name || `Cycleway Section ${index}`,
-            coordinates,
-            language: 'el'
-          });
-        }
       });
-    }
+      
+      if (coordinates.length >= 2) {
+        cycleways.push({
+          id: `cycleway-${id}`,
+          name,
+          coordinates,
+          language
+        });
+      }
+    });
     
+    console.log(`Loaded ${cycleways.length} cycleways from API`);
     return cycleways;
   } catch (error) {
     console.error('Error fetching cycleways:', error);
