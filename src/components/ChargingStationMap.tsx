@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useRef } from "react";
 import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { ChargingStation } from "@/lib/chargingStations";
@@ -7,6 +7,7 @@ interface ChargingStationMapProps {
   stations: ChargingStation[];
   selectedStation?: ChargingStation | null;
   onStationSelect?: (station: ChargingStation) => void;
+  userLocation?: [number, number] | null;
 }
 
 const mapStyle = {
@@ -29,15 +30,13 @@ const mapStyle = {
 export default function ChargingStationMap({
   stations,
   selectedStation,
-  onStationSelect
+  onStationSelect,
+  userLocation
 }: ChargingStationMapProps) {
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
   const markersRef = useRef<maplibregl.Marker[]>([]);
-
-  const stationsById = useMemo(() => {
-    return new Map(stations.map((station) => [station.id, station]));
-  }, [stations]);
+  const markerByIdRef = useRef<Map<string, maplibregl.Marker>>(new Map());
 
   useEffect(() => {
     if (!mapContainerRef.current) return;
@@ -62,6 +61,7 @@ export default function ChargingStationMap({
 
     markersRef.current.forEach((marker) => marker.remove());
     markersRef.current = [];
+    markerByIdRef.current.clear();
 
     stations.forEach((station) => {
       const markerEl = document.createElement("button");
@@ -80,10 +80,22 @@ export default function ChargingStationMap({
         }
       });
 
+      const availabilityLabel =
+        station.availability === "available"
+          ? "Available"
+          : station.availability === "occupied"
+          ? "Occupied"
+          : station.availability === "out_of_service"
+          ? "Out of service"
+          : "Status unknown";
       const popup = new maplibregl.Popup({ offset: 20 }).setHTML(
         `<div class="text-sm font-semibold">${station.name}</div>` +
           (station.address
             ? `<div class="text-xs text-muted-foreground">${station.address}</div>`
+            : "") +
+          `<div class="text-xs mt-1">${availabilityLabel}</div>` +
+          (station.openingHours
+            ? `<div class="text-xs text-muted-foreground">${station.openingHours}</div>`
             : "")
       );
 
@@ -93,14 +105,30 @@ export default function ChargingStationMap({
         .addTo(map);
 
       markersRef.current.push(marker);
+      markerByIdRef.current.set(station.id, marker);
     });
-  }, [stations, selectedStation, onStationSelect]);
+    if (userLocation) {
+      const userMarker = document.createElement("div");
+      userMarker.className = "user-marker";
+      const marker = new maplibregl.Marker({ element: userMarker })
+        .setLngLat(userLocation)
+        .addTo(map);
+      markersRef.current.push(marker);
+    }
+  }, [stations, selectedStation, onStationSelect, userLocation]);
 
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !selectedStation) return;
 
     map.flyTo({ center: selectedStation.coordinates, zoom: 12.5, speed: 1.2 });
+    const marker = markerByIdRef.current.get(selectedStation.id);
+    if (marker) {
+      const popup = marker.getPopup();
+      if (popup && !popup.isOpen()) {
+        marker.togglePopup();
+      }
+    }
   }, [selectedStation]);
 
   return <div ref={mapContainerRef} style={{ width: "100%", height: "100%" }} />;

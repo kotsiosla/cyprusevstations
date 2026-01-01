@@ -1,7 +1,7 @@
 import { ChargingStation } from "@/lib/chargingStations";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { BatteryCharging, MapPin, ArrowRight } from "lucide-react";
+import { BatteryCharging, MapPin, ArrowRight, Clock, Radar, CircleDot } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface ChargingStationListProps {
@@ -15,6 +15,32 @@ const ChargingStationList = ({
   selectedStation,
   onSelect
 }: ChargingStationListProps) => {
+  const availabilityStyles = (availability?: ChargingStation["availability"]) => {
+    switch (availability) {
+      case "available":
+        return "bg-emerald-100 text-emerald-700 border-emerald-200";
+      case "occupied":
+        return "bg-amber-100 text-amber-700 border-amber-200";
+      case "out_of_service":
+        return "bg-rose-100 text-rose-700 border-rose-200";
+      default:
+        return "bg-muted text-muted-foreground border-muted";
+    }
+  };
+
+  const availabilityLabel = (availability?: ChargingStation["availability"]) => {
+    switch (availability) {
+      case "available":
+        return "Available";
+      case "occupied":
+        return "Occupied";
+      case "out_of_service":
+        return "Out of service";
+      default:
+        return "Status unknown";
+    }
+  };
+
   return (
     <div className="space-y-3">
       {stations.map((station, index) => (
@@ -53,6 +79,22 @@ const ChargingStationList = ({
                         {station.power}
                       </Badge>
                     )}
+                    {station.distanceLabel && (
+                      <Badge variant="outline" className="text-[0.65rem] flex items-center gap-1">
+                        <Radar className="w-3 h-3" />
+                        {station.distanceLabel}
+                      </Badge>
+                    )}
+                    <Badge
+                      variant="outline"
+                      className={cn(
+                        "text-[0.65rem] border flex items-center gap-1",
+                        availabilityStyles(station.availability)
+                      )}
+                    >
+                      <CircleDot className="w-3 h-3" />
+                      {availabilityLabel(station.availability)}
+                    </Badge>
                   </div>
                 </div>
               </div>
@@ -75,6 +117,12 @@ const ChargingStationList = ({
                 />
               </div>
             </div>
+            {station.openingHours && (
+              <div className="mt-3 flex items-center gap-2 text-xs text-muted-foreground">
+                <Clock className="w-3 h-3" />
+                <span>{station.openingHours}</span>
+              </div>
+            )}
             {station.address && (
               <div className="mt-3 flex items-center gap-2 text-xs text-muted-foreground">
                 <MapPin className="w-3 h-3" />
