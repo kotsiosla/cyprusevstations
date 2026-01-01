@@ -5,6 +5,7 @@ const OVERPASS_MIRRORS = [
 ];
 
 const CYPRUS_STATUS_SOURCES = [
+  "https://fixcyprus.cy/gnosis/open/api/nap/datasets/electric_vehicle_chargers/",
   "https://raw.githubusercontent.com/kotsiosla/cyprusevstations/main/stations.json",
   "https://raw.githubusercontent.com/kotsiosla/cyprusevstations/main/data/stations.json",
   "https://raw.githubusercontent.com/kotsiosla/cyprusevstations/main/evstations.json",
@@ -75,12 +76,31 @@ function parseConnectors(tags: Record<string, string | undefined>) {
     .map(([, label]) => label);
 }
 
+// OCPP status mapping:
+// - Available -> available
+// - Occupied/Charging/Reserved/Finishing/Preparing/SuspendedEVSE/SuspendedEV -> occupied
+// - Faulted/Unavailable -> out_of_service
+const OCPP_STATUS_MAP: Record<string, ChargingStation["availability"]> = {
+  available: "available",
+  occupied: "occupied",
+  charging: "occupied",
+  reserved: "occupied",
+  finishing: "occupied",
+  preparing: "occupied",
+  suspendedevse: "occupied",
+  suspendedev: "occupied",
+  faulted: "out_of_service",
+  unavailable: "out_of_service"
+};
+
 function normalizeAvailability(value?: string | number | boolean) {
   if (value === undefined || value === null || value === "") return "unknown" as const;
   if (typeof value === "boolean") {
     return value ? ("available" as const) : ("out_of_service" as const);
   }
   const normalized = String(value).toLowerCase().trim();
+  const ocppAvailability = OCPP_STATUS_MAP[normalized];
+  if (ocppAvailability) return ocppAvailability;
   if (
     ["available", "free", "yes", "open", "in_service", "operational", "working"].includes(
       normalized
@@ -196,25 +216,39 @@ type ExternalStatus = {
 };
 
 function deriveStatusFromProps(props: Record<string, any>) {
-  const directValue =
-    props.status ??
-    props.availability ??
-    props.availability_status ??
-    props.operational_status ??
-    props.operationalStatus ??
-    props.status_text ??
-    props.statusLabel ??
-    props.status_description ??
-    props.status_desc ??
-    props.charging_status ??
-    props.connector_status ??
-    props.state ??
-    props.condition ??
-    props.is_available ??
-    props.isAvailable ??
-    props.is_operational ??
-    props.isOperational ??
-    props.operational;
+  const readStatusValue = (record?: Record<string, any>) => {
+    if (!record || typeof record !== "object") return undefined;
+    return (
+      record.status ??
+      record.availability ??
+      record.availability_status ??
+      record.operational_status ??
+      record.operationalStatus ??
+      record.status_text ??
+      record.statusLabel ??
+      record.status_description ??
+      record.status_desc ??
+      record.ocpp_status ??
+      record.ocppStatus ??
+      record.charging_status ??
+      record.connector_status ??
+      record.evse_status ??
+      record.evseStatus ??
+      record.state ??
+      record.condition ??
+      record.is_available ??
+      record.isAvailable ??
+      record.is_operational ??
+      record.isOperational ??
+      record.operational ??
+      record.status_code ??
+      record.statusCode ??
+      record.availability_code ??
+      record.availabilityCode
+    );
+  };
+
+  const directValue = readStatusValue(props);
 
   if (directValue !== undefined && directValue !== null && directValue !== "") {
     return directValue;
@@ -246,23 +280,41 @@ function deriveStatusFromProps(props: Record<string, any>) {
   if (Array.isArray(connectors)) {
     for (const connector of connectors) {
       if (!connector || typeof connector !== "object") continue;
-      const connectorStatus =
-        connector.status ??
-        connector.availability ??
-        connector.state ??
-        connector.condition ??
-        connector.is_available ??
-        connector.isAvailable;
+      const connectorStatus = readStatusValue(connector);
       if (connectorStatus !== undefined && connectorStatus !== null && connectorStatus !== "") {
         return connectorStatus;
       }
     }
   }
 
-  const statusCode =
-    props.status_code ?? props.statusCode ?? props.availability_code ?? props.availabilityCode;
-  if (statusCode !== undefined && statusCode !== null && statusCode !== "") {
-    return statusCode;
+  const nestedCollections = [
+    props.evses,
+    props.evse,
+    props.charge_points,
+    props.chargePoints,
+    props.chargers,
+    props.charging_points,
+    props.chargingPoints
+  ];
+
+  for (const collection of nestedCollections) {
+    if (!Array.isArray(collection)) continue;
+    for (const entry of collection) {
+      if (!entry || typeof entry !== "object") continue;
+      const entryStatus = readStatusValue(entry);
+      if (entryStatus !== undefined && entryStatus !== null && entryStatus !== "") {
+        return entryStatus;
+      }
+      const entryConnectors = entry.connectors ?? entry.connector ?? entry.outlets ?? entry.ports;
+      if (!Array.isArray(entryConnectors)) continue;
+      for (const connector of entryConnectors) {
+        if (!connector || typeof connector !== "object") continue;
+        const connectorStatus = readStatusValue(connector);
+        if (connectorStatus !== undefined && connectorStatus !== null && connectorStatus !== "") {
+          return connectorStatus;
+        }
+      }
+    }
   }
 
   return undefined;
@@ -299,6 +351,11 @@ function parseExternalStatusItem(item: any): ExternalStatus | null {
     props.lat ??
     props.latitude ??
     props.y ??
+    props.location?.lat ??
+    props.location?.latitude ??
+    props.location?.y ??
+    props.location?.coordinates?.[1] ??
+    props.coordinates?.[1] ??
     item.lat ??
     item.latitude ??
     item.y ??
@@ -308,6 +365,12 @@ function parseExternalStatusItem(item: any): ExternalStatus | null {
     props.lng ??
     props.longitude ??
     props.x ??
+    props.location?.lon ??
+    props.location?.lng ??
+    props.location?.longitude ??
+    props.location?.x ??
+    props.location?.coordinates?.[0] ??
+    props.coordinates?.[0] ??
     item.lon ??
     item.lng ??
     item.longitude ??
@@ -385,6 +448,14 @@ async function fetchExternalStatusData(): Promise<ExternalStatus[]> {
         ? data.stations
         : Array.isArray(data?.features)
         ? data.features
+        : Array.isArray(data?.results)
+        ? data.results
+        : Array.isArray(data?.items)
+        ? data.items
+        : Array.isArray(data?.data)
+        ? data.data
+        : Array.isArray(data?.records)
+        ? data.records
         : typeof data === "string"
         ? parseCsv(data)
         : [];
