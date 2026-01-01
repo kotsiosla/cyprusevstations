@@ -74,6 +74,18 @@ const Header = () => {
           <a href="#about" className="text-sm font-medium hover:text-primary transition-colors">
             About
           </a>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={toggleTheme}
+            aria-label="Toggle theme"
+            title={resolvedTheme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+            className="hidden md:inline-flex gap-2"
+          >
+            {resolvedTheme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+            <span>{resolvedTheme === 'dark' ? 'Light mode' : 'Dark mode'}</span>
+          </Button>
           {isInstallable && (
             <Button variant="hero" size="sm" onClick={handleInstall}>
               <Download className="w-4 h-4" />
@@ -102,7 +114,7 @@ const Header = () => {
             className="gap-2"
           >
             {resolvedTheme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
-            <span className="hidden sm:inline">
+            <span className="hidden sm:inline md:hidden">
               {resolvedTheme === 'dark' ? 'Light mode' : 'Dark mode'}
             </span>
           </Button>
