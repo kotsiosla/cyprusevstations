@@ -4,6 +4,7 @@ const OVERPASS_MIRRORS = [
   "https://overpass.nchc.org.tw/api/interpreter"
 ];
 const CYPRUS_STATUS_SOURCES = [
+  "https://fixcyprus.cy/gnosis/open/api/nap/datasets/electric_vehicle_chargers/",
   "https://traffic4cyprus.org.cy/dataset/electricvehiclecharges/resource/471c1040-cda9-47b8-9b47-2a9065aeddba/download"
 ];
 const PLACETOPLUG_STATUS_SOURCES = [
@@ -564,7 +565,9 @@ async function fetchExternalStatusData(): Promise<ExternalStatus[]> {
 
   for (const url of candidateSources) {
     try {
-      const res = await fetch(url, { headers: { Accept: "application/xml,text/plain" } });
+      const res = await fetch(url, {
+        headers: { Accept: "application/xml,application/json,text/plain" }
+      });
       if (!res.ok) continue;
       const contentType = res.headers.get("content-type") || "";
       if (contentType.includes("xml") || contentType.includes("text/plain")) {
