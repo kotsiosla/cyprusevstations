@@ -1,6 +1,7 @@
 import { Button } from '@/components/ui/button';
-import { BatteryCharging, Menu, X, Download } from 'lucide-react';
+import { BatteryCharging, Menu, X, Download, Moon, Sun } from 'lucide-react';
 import { useState, useEffect } from 'react';
+import { useTheme } from 'next-themes';
 
 interface BeforeInstallPromptEvent extends Event {
   prompt(): Promise<void>;
@@ -12,6 +13,11 @@ const Header = () => {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const [isInstallable, setIsInstallable] = useState(false);
+  const { resolvedTheme, setTheme } = useTheme();
+
+  const toggleTheme = () => {
+    setTheme(resolvedTheme === 'dark' ? 'light' : 'dark');
+  };
 
   useEffect(() => {
     const handleScroll = () => {
@@ -68,20 +74,37 @@ const Header = () => {
           <a href="#about" className="text-sm font-medium hover:text-primary transition-colors">
             About
           </a>
+        </nav>
+
+        <div className="flex items-center gap-2">
           {isInstallable && (
             <Button variant="hero" size="sm" onClick={handleInstall}>
               <Download className="w-4 h-4" />
               Install App
             </Button>
           )}
-        </nav>
-
-        <button
-          className="md:hidden p-2 hover:bg-muted rounded-lg transition-colors"
-          onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
-        >
-          {isMobileMenuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
-        </button>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={toggleTheme}
+            aria-label="Toggle theme"
+            title={resolvedTheme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+            className="gap-2"
+          >
+            {resolvedTheme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+            <span className="hidden sm:inline">
+              {resolvedTheme === 'dark' ? 'Light mode' : 'Dark mode'}
+            </span>
+          </Button>
+          <button
+            className="md:hidden p-2 hover:bg-muted rounded-lg transition-colors"
+            onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
+            aria-label="Toggle menu"
+          >
+            {isMobileMenuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
+          </button>
+        </div>
       </div>
 
       {/* Mobile Menu */}
@@ -103,6 +126,16 @@ const Header = () => {
                 Install App
               </Button>
             )}
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={toggleTheme}
+              className="gap-2"
+            >
+              {resolvedTheme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+              {resolvedTheme === 'dark' ? 'Light mode' : 'Dark mode'}
+            </Button>
           </nav>
         </div>
       )}
