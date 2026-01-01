@@ -1,7 +1,7 @@
 import { ChargingStation } from "@/lib/chargingStations";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { BatteryCharging, MapPin, ArrowRight, Clock, Radar } from "lucide-react";
+import { BatteryCharging, MapPin, ArrowRight, Clock, Radar, CircleDot } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface ChargingStationListProps {
@@ -85,6 +85,16 @@ const ChargingStationList = ({
                         {station.distanceLabel}
                       </Badge>
                     )}
+                    <Badge
+                      variant="outline"
+                      className={cn(
+                        "text-[0.65rem] border flex items-center gap-1",
+                        availabilityStyles(station.availability)
+                      )}
+                    >
+                      <CircleDot className="w-3 h-3" />
+                      {availabilityLabel(station.availability)}
+                    </Badge>
                   </div>
                 </div>
               </div>
