@@ -3,7 +3,6 @@ const OVERPASS_MIRRORS = [
   "https://overpass.kumi.systems/api/interpreter",
   "https://overpass.nchc.org.tw/api/interpreter"
 ];
-
 const CYPRUS_STATUS_SOURCES = [
   "https://raw.githubusercontent.com/kotsiosla/cyprusevstations/main/stations.json",
   "https://raw.githubusercontent.com/kotsiosla/cyprusevstations/main/data/stations.json",
@@ -75,21 +74,17 @@ function parseConnectors(tags: Record<string, string | undefined>) {
     .map(([, label]) => label);
 }
 
-// OCPP status mapping:
-// - Available -> available
-// - Occupied/Charging/Reserved/Finishing/Preparing/SuspendedEVSE/SuspendedEV -> occupied
-// - Faulted/Unavailable -> out_of_service
 const OCPP_STATUS_MAP: Record<string, ChargingStation["availability"]> = {
   available: "available",
   occupied: "occupied",
   charging: "occupied",
-  reserved: "occupied",
-  finishing: "occupied",
-  preparing: "occupied",
-  suspendedevse: "occupied",
-  suspendedev: "occupied",
   faulted: "out_of_service",
-  unavailable: "out_of_service"
+  unavailable: "out_of_service",
+  reserved: "occupied",
+  preparing: "occupied",
+  finishing: "occupied",
+  suspendedev: "occupied",
+  suspendedevse: "occupied"
 };
 
 function normalizeAvailability(value?: string | number | boolean) {
@@ -97,9 +92,10 @@ function normalizeAvailability(value?: string | number | boolean) {
   if (typeof value === "boolean") {
     return value ? ("available" as const) : ("out_of_service" as const);
   }
-  const normalized = String(value).toLowerCase().trim();
-  const ocppAvailability = OCPP_STATUS_MAP[normalized];
-  if (ocppAvailability) return ocppAvailability;
+  const normalized = String(value).toLowerCase().trim().replace(/[\s_-]+/g, "");
+  if (normalized in OCPP_STATUS_MAP) {
+    return OCPP_STATUS_MAP[normalized];
+  }
   if (
     ["available", "free", "yes", "open", "in_service", "operational", "working"].includes(
       normalized
@@ -225,8 +221,6 @@ function deriveStatusFromProps(props: Record<string, any>) {
     props.statusLabel ??
     props.status_description ??
     props.status_desc ??
-    props.ocpp_status ??
-    props.ocppStatus ??
     props.charging_status ??
     props.connector_status ??
     props.state ??
@@ -272,8 +266,6 @@ function deriveStatusFromProps(props: Record<string, any>) {
         connector.availability ??
         connector.state ??
         connector.condition ??
-        connector.ocpp_status ??
-        connector.ocppStatus ??
         connector.is_available ??
         connector.isAvailable;
       if (connectorStatus !== undefined && connectorStatus !== null && connectorStatus !== "") {
