@@ -340,12 +340,21 @@ const Index = () => {
                   About ChargeCyprus
                 </h2>
                 <p className="text-muted-foreground mb-6">
-                  ChargeCyprus aggregates open data from OpenStreetMap to help drivers discover EV
-                  charging infrastructure across the island. Our goal is to make sustainable travel
-                  easier by highlighting connector types, fast chargers, and 24/7 locations.
+                  ChargeCyprus highlights EV charging infrastructure across the island using
+                  curated station data and live map context. Our goal is to make sustainable travel
+                  easier by spotlighting connector types, fast chargers, and 24/7 locations.
                 </p>
-                <div className="inline-flex items-center gap-2 text-sm text-muted-foreground">
+                <div className="inline-flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
                   <span>Data source:</span>
+                  <a
+                    href="https://github.com/kotsiosla/cyprusevstations"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-primary hover:underline"
+                  >
+                    Cyprus EV Stations
+                  </a>
+                  <span className="text-muted-foreground/60">·</span>
                   <a
                     href="https://www.openstreetmap.org"
                     target="_blank"
