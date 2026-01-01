@@ -31,7 +31,10 @@ const Index = () => {
       try {
         const data = await fetchChargingStations();
         if (data.length > 0) {
-          setStations(data);
+          const hasKnownAvailability = data.some(
+            (station) => station.availability && station.availability !== 'unknown'
+          );
+          setStations(hasKnownAvailability ? data : sampleChargingStations);
         }
       } catch (error) {
         console.error('Failed to load charging stations:', error);
