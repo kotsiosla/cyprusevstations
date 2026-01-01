@@ -1,10 +1,10 @@
-import { Bike, Map, Route, Users } from 'lucide-react';
+import { BatteryCharging, Zap, MapPin, ShieldCheck } from 'lucide-react';
 
 const stats = [
-  { icon: Route, label: 'Cycling Routes', value: '50+', color: 'text-primary' },
-  { icon: Map, label: 'Total Distance', value: '200km', color: 'text-accent' },
-  { icon: Users, label: 'Cyclists Daily', value: '5K+', color: 'text-primary' },
-  { icon: Bike, label: 'Cities Covered', value: '6', color: 'text-accent' },
+  { icon: BatteryCharging, label: 'Charging Stations', value: '120+', color: 'text-primary' },
+  { icon: Zap, label: 'Fast Chargers', value: '40+', color: 'text-accent' },
+  { icon: MapPin, label: 'Cities Covered', value: '10', color: 'text-primary' },
+  { icon: ShieldCheck, label: '24/7 Locations', value: '60+', color: 'text-accent' }
 ];
 
 const StatsSection = () => {

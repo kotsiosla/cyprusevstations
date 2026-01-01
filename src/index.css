@@ -183,3 +183,32 @@
 .stagger-2 { animation-delay: 0.2s; }
 .stagger-3 { animation-delay: 0.3s; }
 .stagger-4 { animation-delay: 0.4s; }
+
+/* Map markers */
+.charging-marker {
+  width: 36px;
+  height: 36px;
+  border-radius: 9999px;
+  background: hsl(var(--primary));
+  border: 3px solid hsl(var(--background));
+  box-shadow: var(--shadow-soft);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.charging-marker::after {
+  content: "";
+  width: 10px;
+  height: 10px;
+  background: hsl(var(--primary-foreground));
+  border-radius: 9999px;
+}
+
+.charging-marker--active {
+  transform: scale(1.15);
+  box-shadow: var(--shadow-glow);
+  background: hsl(var(--accent));
+}
