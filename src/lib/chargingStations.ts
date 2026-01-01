@@ -4,6 +4,14 @@ const OVERPASS_MIRRORS = [
   "https://overpass.nchc.org.tw/api/interpreter"
 ];
 
+const CYPRUS_STATUS_SOURCES = [
+  "https://raw.githubusercontent.com/kotsiosla/cyprusevstations/main/stations.json",
+  "https://raw.githubusercontent.com/kotsiosla/cyprusevstations/main/data/stations.json",
+  "https://raw.githubusercontent.com/kotsiosla/cyprusevstations/main/evstations.json",
+  "https://raw.githubusercontent.com/kotsiosla/cyprusevstations/main/data/evstations.json",
+  "https://raw.githubusercontent.com/kotsiosla/cyprusevstations/main/charging-stations.json"
+];
+
 export interface ChargingStation {
   id: string;
   name: string;
@@ -17,6 +25,7 @@ export interface ChargingStation {
   open24_7?: boolean;
   openingHours?: string;
   availability?: "available" | "occupied" | "out_of_service" | "unknown";
+  statusLabel?: string;
   distanceKm?: number;
   distanceLabel?: string;
   coordinates: [number, number];
@@ -66,26 +75,50 @@ function parseConnectors(tags: Record<string, string | undefined>) {
 
 function normalizeAvailability(value?: string) {
   if (!value) return "unknown" as const;
-  const normalized = value.toLowerCase();
-  if (["available", "free", "yes", "open", "in_service", "operational", "working"].includes(normalized)) {
+  const normalized = value.toLowerCase().trim();
+  if (
+    ["available", "free", "yes", "open", "in_service", "operational", "working"].includes(
+      normalized
+    ) ||
+    normalized.includes("available") ||
+    normalized.includes("operational") ||
+    normalized.includes("working")
+  ) {
     return "available" as const;
   }
-  if (["occupied", "busy", "in_use"].includes(normalized)) return "occupied" as const;
+  if (
+    ["occupied", "busy", "in_use"].includes(normalized) ||
+    normalized.includes("occupied") ||
+    normalized.includes("busy")
+  ) {
+    return "occupied" as const;
+  }
   if (
     ["out_of_service", "out-of-service", "maintenance", "closed", "no", "inactive", "fault"].includes(
       normalized
-    )
+    ) ||
+    normalized.includes("out of service") ||
+    normalized.includes("out-of-service") ||
+    normalized.includes("maintenance") ||
+    normalized.includes("fault") ||
+    normalized.includes("broken") ||
+    normalized.includes("fix")
   ) {
     return "out_of_service" as const;
   }
   return "unknown" as const;
 }
 
-function deriveAvailability(tags: Record<string, string | undefined>) {
+function findStatusCandidates(tags: Record<string, string | undefined>) {
   const candidates: string[] = [];
   const direct =
     tags["charging:status"] ||
     tags["charging_station:status"] ||
+    tags["status:charging_station"] ||
+    tags["charging_station:state"] ||
+    tags["state"] ||
+    tags["condition"] ||
+    tags["charging_station:condition"] ||
     tags["availability"] ||
     tags["operational_status"] ||
     tags["status"];
@@ -93,11 +126,21 @@ function deriveAvailability(tags: Record<string, string | undefined>) {
 
   Object.entries(tags).forEach(([key, value]) => {
     if (!value) return;
-    if (key.endsWith(":status") || key.endsWith(":availability")) {
+    if (
+      key.endsWith(":status") ||
+      key.endsWith(":availability") ||
+      key.endsWith(":state") ||
+      key.endsWith(":condition")
+    ) {
       candidates.push(value);
     }
   });
 
+  return candidates.map((value) => value.trim()).filter(Boolean);
+}
+
+function deriveAvailability(tags: Record<string, string | undefined>) {
+  const candidates = findStatusCandidates(tags);
   if (!candidates.length) return "unknown" as const;
 
   const normalized = candidates.map(normalizeAvailability);
@@ -105,6 +148,100 @@ function deriveAvailability(tags: Record<string, string | undefined>) {
   if (normalized.includes("occupied")) return "occupied" as const;
   if (normalized.includes("available")) return "available" as const;
   return "unknown" as const;
+}
+
+function deriveStatusLabel(tags: Record<string, string | undefined>) {
+  const candidates = findStatusCandidates(tags);
+  if (!candidates.length) return undefined;
+  return toTitleCase(candidates[0].replace(/[_-]+/g, " "));
+}
+
+function normalizeStatusLabel(value?: string) {
+  if (!value) return undefined;
+  return toTitleCase(value.replace(/[_-]+/g, " ").trim());
+}
+
+function coordinateKey(lon: number, lat: number, precision = 4) {
+  return `${lon.toFixed(precision)},${lat.toFixed(precision)}`;
+}
+
+type ExternalStatus = {
+  name?: string;
+  statusLabel?: string;
+  availability?: ChargingStation["availability"];
+  coordinates: [number, number];
+};
+
+function parseExternalStatusItem(item: any): ExternalStatus | null {
+  if (!item || typeof item !== "object") return null;
+
+  const props = item.properties ?? item;
+  const name = props.name || props.title || props.station || props.location;
+  const statusValue =
+    props.status ||
+    props.availability ||
+    props.operational_status ||
+    props.state ||
+    props.condition;
+
+  const lat =
+    props.lat ??
+    props.latitude ??
+    props.y ??
+    item.lat ??
+    item.latitude ??
+    item.y ??
+    item?.geometry?.coordinates?.[1];
+  const lon =
+    props.lon ??
+    props.lng ??
+    props.longitude ??
+    props.x ??
+    item.lon ??
+    item.lng ??
+    item.longitude ??
+    item.x ??
+    item?.geometry?.coordinates?.[0];
+
+  if (typeof lat !== "number" || typeof lon !== "number") return null;
+
+  const availability = normalizeAvailability(statusValue);
+  const statusLabel = normalizeStatusLabel(statusValue);
+
+  return {
+    name: name ? String(name) : undefined,
+    statusLabel,
+    availability,
+    coordinates: [lon, lat]
+  };
+}
+
+async function fetchExternalStatusData(): Promise<ExternalStatus[]> {
+  for (const url of CYPRUS_STATUS_SOURCES) {
+    try {
+      const res = await fetch(url, { headers: { Accept: "application/json" } });
+      if (!res.ok) continue;
+      const data = await res.json();
+      const items: any[] = Array.isArray(data)
+        ? data
+        : Array.isArray(data?.stations)
+        ? data.stations
+        : Array.isArray(data?.features)
+        ? data.features
+        : [];
+
+      if (!items.length) continue;
+
+      const parsed = items
+        .map(parseExternalStatusItem)
+        .filter((item): item is ExternalStatus => Boolean(item));
+
+      if (parsed.length) return parsed;
+    } catch {
+      continue;
+    }
+  }
+  return [];
 }
 
 async function fetchWithFailover(body: string) {
@@ -129,6 +266,16 @@ export async function fetchChargingStations(): Promise<ChargingStation[]> {
   try {
     const osm = await fetchWithFailover(cyprusChargingOverpassQuery());
     const elements = osm?.elements ?? [];
+    const externalStatuses = await fetchExternalStatusData();
+    const statusByCoord = new Map<string, ExternalStatus>();
+    const statusByName = new Map<string, ExternalStatus>();
+
+    externalStatuses.forEach((status) => {
+      statusByCoord.set(coordinateKey(status.coordinates[0], status.coordinates[1]), status);
+      if (status.name) {
+        statusByName.set(status.name.toLowerCase(), status);
+      }
+    });
 
     const stations: ChargingStation[] = elements
       .map((el: any) => {
@@ -143,6 +290,14 @@ export async function fetchChargingStations(): Promise<ChargingStation[]> {
         const address = buildAddress(tags);
         const opening = tags.opening_hours;
         const availability = deriveAvailability(tags);
+        const statusLabel = deriveStatusLabel(tags);
+        const external =
+          statusByCoord.get(coordinateKey(lon, lat)) ||
+          statusByName.get(name.toLowerCase()) ||
+          statusByName.get(toTitleCase(name).toLowerCase());
+        const mergedAvailability =
+          availability !== "unknown" ? availability : external?.availability ?? availability;
+        const mergedStatusLabel = statusLabel || external?.statusLabel;
 
         return {
           id: `${el.type}/${el.id}`,
@@ -156,7 +311,8 @@ export async function fetchChargingStations(): Promise<ChargingStation[]> {
           access: tags.access,
           open24_7: opening?.includes("24/7"),
           openingHours: opening,
-          availability,
+          availability: mergedAvailability,
+          statusLabel: mergedStatusLabel,
           coordinates: [lon, lat]
         } as ChargingStation;
       })
