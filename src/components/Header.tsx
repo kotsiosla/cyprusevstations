@@ -92,6 +92,15 @@ const Header = () => {
               Install App
             </Button>
           )}
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            onClick={toggleTheme}
+            aria-label="Toggle dark mode"
+          >
+            {resolvedTheme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+          </Button>
         </nav>
 
         <div className="flex items-center gap-2">
