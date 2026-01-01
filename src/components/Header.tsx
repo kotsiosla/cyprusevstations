@@ -95,12 +95,16 @@ const Header = () => {
           <Button
             type="button"
             variant="outline"
-            size="icon"
+            size="sm"
             onClick={toggleTheme}
             aria-label="Toggle theme"
             title={resolvedTheme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+            className="gap-2"
           >
             {resolvedTheme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+            <span className="hidden sm:inline">
+              {resolvedTheme === 'dark' ? 'Light mode' : 'Dark mode'}
+            </span>
           </Button>
           <button
             className="md:hidden p-2 hover:bg-muted rounded-lg transition-colors"
