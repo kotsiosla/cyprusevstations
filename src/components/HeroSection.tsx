@@ -1,14 +1,7 @@
 import { Button } from '@/components/ui/button';
-import { BatteryCharging, ChevronDown, MapPin, Moon, Sun } from 'lucide-react';
-import { useTheme } from 'next-themes';
+import { BatteryCharging, ChevronDown, MapPin } from 'lucide-react';
 
 const HeroSection = () => {
-  const { resolvedTheme, setTheme } = useTheme();
-
-  const toggleTheme = () => {
-    setTheme(resolvedTheme === 'dark' ? 'light' : 'dark');
-  };
-
   return (
     <section className="relative min-h-screen flex items-center justify-center overflow-hidden pt-20">
       {/* Background */}
@@ -53,20 +46,6 @@ const HeroSection = () => {
             </Button>
             <Button variant="glass" size="xl" asChild>
               <a href="#stations">View All Stations</a>
-            </Button>
-          </div>
-          <div className="mt-5 flex justify-center opacity-0 animate-slide-up stagger-3">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={toggleTheme}
-              aria-label="Toggle theme"
-              title={resolvedTheme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
-              className="gap-2"
-            >
-              {resolvedTheme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
-              <span>{resolvedTheme === 'dark' ? 'Light mode' : 'Dark mode'}</span>
             </Button>
           </div>
         </div>
