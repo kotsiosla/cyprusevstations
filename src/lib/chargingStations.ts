@@ -3,6 +3,16 @@ const OVERPASS_MIRRORS = [
   "https://overpass.kumi.systems/api/interpreter",
   "https://overpass.nchc.org.tw/api/interpreter"
 ];
+const CYPRUS_STATUS_SOURCES = [
+  "https://fixcyprus.cy/gnosis/open/api/nap/datasets/electric_vehicle_chargers/",
+  "https://raw.githubusercontent.com/kotsiosla/cyprusevstations/main/stations.json",
+  "https://raw.githubusercontent.com/kotsiosla/cyprusevstations/main/data/stations.json",
+  "https://raw.githubusercontent.com/kotsiosla/cyprusevstations/main/evstations.json",
+  "https://raw.githubusercontent.com/kotsiosla/cyprusevstations/main/data/evstations.json",
+  "https://raw.githubusercontent.com/kotsiosla/cyprusevstations/main/charging-stations.json"
+];
+
+const CYPRUS_STATUS_REPO = "https://api.github.com/repos/kotsiosla/cyprusevstations/contents";
 
 export interface ChargingStation {
   id: string;
@@ -17,6 +27,7 @@ export interface ChargingStation {
   open24_7?: boolean;
   openingHours?: string;
   availability?: "available" | "occupied" | "out_of_service" | "unknown";
+  statusLabel?: string;
   distanceKm?: number;
   distanceLabel?: string;
   coordinates: [number, number];
@@ -163,6 +174,318 @@ function deriveAvailability(tags: Record<string, string | undefined>) {
   return "unknown" as const;
 }
 
+function deriveStatusLabel(tags: Record<string, string | undefined>) {
+  const candidates = findStatusCandidates(tags);
+  if (!candidates.length) return undefined;
+  return toTitleCase(candidates[0].replace(/[_-]+/g, " "));
+}
+
+function normalizeStatusLabel(value?: string | number | boolean) {
+  if (value === undefined || value === null || value === "") return undefined;
+  if (typeof value === "boolean") return value ? "Available" : "Out Of Service";
+  return toTitleCase(String(value).replace(/[_-]+/g, " ").trim());
+}
+
+function coordinateKey(lon: number, lat: number, precision = 4) {
+  return `${lon.toFixed(precision)},${lat.toFixed(precision)}`;
+}
+
+function haversineDistanceKm(from: [number, number], to: [number, number]) {
+  const toRad = (value: number) => (value * Math.PI) / 180;
+  const [fromLng, fromLat] = from;
+  const [toLng, toLat] = to;
+  const earthRadiusKm = 6371;
+  const dLat = toRad(toLat - fromLat);
+  const dLng = toRad(toLng - fromLng);
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(fromLat)) * Math.cos(toRad(toLat)) * Math.sin(dLng / 2) ** 2;
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return earthRadiusKm * c;
+}
+
+type ExternalStatus = {
+  name?: string;
+  statusLabel?: string;
+  availability?: ChargingStation["availability"];
+  coordinates: [number, number];
+};
+
+function deriveStatusFromProps(props: Record<string, any>) {
+  const readStatusValue = (record?: Record<string, any>) => {
+    if (!record || typeof record !== "object") return undefined;
+    return (
+      record.status ??
+      record.availability ??
+      record.availability_status ??
+      record.operational_status ??
+      record.operationalStatus ??
+      record.status_text ??
+      record.statusLabel ??
+      record.status_description ??
+      record.status_desc ??
+      record.ocpp_status ??
+      record.ocppStatus ??
+      record.charging_status ??
+      record.connector_status ??
+      record.evse_status ??
+      record.evseStatus ??
+      record.state ??
+      record.condition ??
+      record.is_available ??
+      record.isAvailable ??
+      record.is_operational ??
+      record.isOperational ??
+      record.operational ??
+      record.status_code ??
+      record.statusCode ??
+      record.availability_code ??
+      record.availabilityCode
+    );
+  };
+
+  const deriveStatusFromCounts = (record?: Record<string, any>) => {
+    if (!record || typeof record !== "object") return undefined;
+    const availableCount = Number(
+      record.available ?? record.available_count ?? record.free ?? record.free_count ?? 0
+    );
+    const occupiedCount = Number(
+      record.occupied ?? record.occupied_count ?? record.busy ?? record.busy_count ?? 0
+    );
+    const outOfServiceCount = Number(
+      record.out_of_service ??
+        record.out_of_service_count ??
+        record.out_of_order ??
+        record.out_of_order_count ??
+        record.maintenance ??
+        record.maintenance_count ??
+        record.offline ??
+        record.offline_count ??
+        0
+    );
+
+    if (Number.isFinite(availableCount) && availableCount > 0) return "available";
+    if (Number.isFinite(occupiedCount) && occupiedCount > 0) return "occupied";
+    if (Number.isFinite(outOfServiceCount) && outOfServiceCount > 0) return "out_of_service";
+    return undefined;
+  };
+
+  const directValue = readStatusValue(props);
+
+  if (directValue !== undefined && directValue !== null && directValue !== "") {
+    if (typeof directValue === "object") {
+      const countBased = deriveStatusFromCounts(directValue as Record<string, any>);
+      if (countBased) return countBased;
+      const nestedValue = readStatusValue(directValue as Record<string, any>);
+      if (nestedValue !== undefined && nestedValue !== null && nestedValue !== "") {
+        return nestedValue;
+      }
+    } else {
+      return directValue;
+    }
+  }
+
+  const countBased = deriveStatusFromCounts(props);
+  if (countBased) return countBased;
+
+  const connectors = props.connectors ?? props.connector ?? props.outlets ?? props.ports;
+  if (Array.isArray(connectors)) {
+    for (const connector of connectors) {
+      if (!connector || typeof connector !== "object") continue;
+      const connectorStatus = readStatusValue(connector);
+      if (connectorStatus !== undefined && connectorStatus !== null && connectorStatus !== "") {
+        return connectorStatus;
+      }
+    }
+  }
+
+  const nestedCollections = [
+    props.evses,
+    props.evse,
+    props.charge_points,
+    props.chargePoints,
+    props.chargers,
+    props.charging_points,
+    props.chargingPoints
+  ];
+
+  for (const collection of nestedCollections) {
+    if (!Array.isArray(collection)) continue;
+    for (const entry of collection) {
+      if (!entry || typeof entry !== "object") continue;
+      const entryStatus = readStatusValue(entry);
+      if (entryStatus !== undefined && entryStatus !== null && entryStatus !== "") {
+        return entryStatus;
+      }
+      const entryConnectors = entry.connectors ?? entry.connector ?? entry.outlets ?? entry.ports;
+      if (!Array.isArray(entryConnectors)) continue;
+      for (const connector of entryConnectors) {
+        if (!connector || typeof connector !== "object") continue;
+        const connectorStatus = readStatusValue(connector);
+        if (connectorStatus !== undefined && connectorStatus !== null && connectorStatus !== "") {
+          return connectorStatus;
+        }
+      }
+    }
+  }
+
+  return undefined;
+}
+
+function parseCsv(text: string) {
+  const lines = text.split(/\r?\n/).filter((line) => line.trim());
+  if (lines.length < 2) return [];
+  const header = lines[0].split(",").map((cell) => cell.trim().toLowerCase());
+  return lines.slice(1).map((line) => {
+    const cells = line.split(",").map((cell) => cell.trim());
+    const row: Record<string, string> = {};
+    header.forEach((key, index) => {
+      row[key] = cells[index] ?? "";
+    });
+    return row;
+  });
+}
+
+function parseExternalStatusItem(item: any): ExternalStatus | null {
+  if (!item || typeof item !== "object") return null;
+
+  const props = item.properties ?? item;
+  const name =
+    props.name ||
+    props.title ||
+    props.station ||
+    props.station_name ||
+    props.charger_name ||
+    props.location;
+  const statusValue = deriveStatusFromProps(props);
+
+  const latRaw =
+    props.lat ??
+    props.latitude ??
+    props.y ??
+    props.location?.lat ??
+    props.location?.latitude ??
+    props.location?.y ??
+    props.location?.coordinates?.[1] ??
+    props.coordinates?.[1] ??
+    item.lat ??
+    item.latitude ??
+    item.y ??
+    item?.geometry?.coordinates?.[1];
+  const lonRaw =
+    props.lon ??
+    props.lng ??
+    props.longitude ??
+    props.x ??
+    props.location?.lon ??
+    props.location?.lng ??
+    props.location?.longitude ??
+    props.location?.x ??
+    props.location?.coordinates?.[0] ??
+    props.coordinates?.[0] ??
+    item.lon ??
+    item.lng ??
+    item.longitude ??
+    item.x ??
+    item?.geometry?.coordinates?.[0];
+
+  const lat = typeof latRaw === "string" ? Number(latRaw) : latRaw;
+  const lon = typeof lonRaw === "string" ? Number(lonRaw) : lonRaw;
+
+  if (typeof lat !== "number" || typeof lon !== "number") return null;
+
+  const availability = normalizeAvailability(statusValue);
+  const statusLabel = normalizeStatusLabel(statusValue);
+
+  return {
+    name: name ? String(name) : undefined,
+    statusLabel,
+    availability,
+    coordinates: [lon, lat]
+  };
+}
+
+async function fetchGithubContents(path = "") {
+  const url = path ? `${CYPRUS_STATUS_REPO}/${path}` : CYPRUS_STATUS_REPO;
+  const res = await fetch(url, { headers: { Accept: "application/vnd.github+json" } });
+  if (!res.ok) return [];
+  const data = await res.json();
+  return Array.isArray(data) ? data : [];
+}
+
+async function discoverStatusFiles() {
+  const entries = await fetchGithubContents();
+  const directories = entries
+    .filter((entry: any) => entry.type === "dir")
+    .map((entry: any) => entry.path)
+    .filter((path: string) => /data|dataset|geo|json/i.test(path));
+  const files = entries.filter((entry: any) => entry.type === "file");
+
+  const nestedFiles = await Promise.all(
+    directories.map((path: string) => fetchGithubContents(path))
+  );
+
+  return [...files, ...nestedFiles.flat()].filter((entry: any) => {
+    const name = String(entry.name || "").toLowerCase();
+    return (
+      entry.type === "file" &&
+      (name.endsWith(".json") || name.endsWith(".geojson") || name.endsWith(".csv")) &&
+      /station|charger|charging|ev/.test(name)
+    );
+  });
+}
+
+async function fetchExternalStatusData(): Promise<ExternalStatus[]> {
+  const candidateSources = [...CYPRUS_STATUS_SOURCES];
+  try {
+    const discovered = await discoverStatusFiles();
+    discovered.forEach((entry: any) => {
+      if (entry.download_url) {
+        candidateSources.push(entry.download_url);
+      }
+    });
+  } catch {
+    // ignore discovery errors
+  }
+
+  for (const url of candidateSources) {
+    try {
+      const res = await fetch(url, { headers: { Accept: "application/json,text/plain" } });
+      if (!res.ok) continue;
+      const contentType = res.headers.get("content-type") || "";
+      const data = contentType.includes("text/csv") ? await res.text() : await res.json();
+      const items: any[] = Array.isArray(data)
+        ? data
+        : Array.isArray(data?.stations)
+        ? data.stations
+        : Array.isArray(data?.features)
+        ? data.features
+        : Array.isArray(data?.results)
+        ? data.results
+        : Array.isArray(data?.items)
+        ? data.items
+        : Array.isArray(data?.data)
+        ? data.data
+        : Array.isArray(data?.records)
+        ? data.records
+        : typeof data === "string"
+        ? parseCsv(data)
+        : [];
+
+      if (!items.length) continue;
+
+      const parsed = items
+        .map(parseExternalStatusItem)
+        .filter((item): item is ExternalStatus => Boolean(item));
+
+      if (parsed.length) return parsed;
+    } catch {
+      continue;
+    }
+  }
+  return [];
+}
+
 async function fetchWithFailover(body: string) {
   let lastErr: any = null;
   for (const url of OVERPASS_MIRRORS) {
@@ -185,6 +508,17 @@ export async function fetchChargingStations(): Promise<ChargingStation[]> {
   try {
     const osm = await fetchWithFailover(cyprusChargingOverpassQuery());
     const elements = osm?.elements ?? [];
+    const externalStatuses = await fetchExternalStatusData();
+    const statusByCoord = new Map<string, ExternalStatus>();
+    const statusByName = new Map<string, ExternalStatus>();
+
+    externalStatuses.forEach((status) => {
+      statusByCoord.set(coordinateKey(status.coordinates[0], status.coordinates[1]), status);
+      if (status.name) {
+        statusByName.set(status.name.toLowerCase(), status);
+      }
+    });
+    const maxStatusDistanceKm = 0.2;
 
     const stations: ChargingStation[] = elements
       .map((el: any) => {
