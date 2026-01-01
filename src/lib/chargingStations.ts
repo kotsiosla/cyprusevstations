@@ -174,6 +174,20 @@ function coordinateKey(lon: number, lat: number, precision = 4) {
   return `${lon.toFixed(precision)},${lat.toFixed(precision)}`;
 }
 
+function haversineDistanceKm(from: [number, number], to: [number, number]) {
+  const toRad = (value: number) => (value * Math.PI) / 180;
+  const [fromLng, fromLat] = from;
+  const [toLng, toLat] = to;
+  const earthRadiusKm = 6371;
+  const dLat = toRad(toLat - fromLat);
+  const dLng = toRad(toLng - fromLng);
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(fromLat)) * Math.cos(toRad(toLat)) * Math.sin(dLng / 2) ** 2;
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return earthRadiusKm * c;
+}
+
 type ExternalStatus = {
   name?: string;
   statusLabel?: string;
@@ -366,6 +380,7 @@ export async function fetchChargingStations(): Promise<ChargingStation[]> {
         statusByName.set(status.name.toLowerCase(), status);
       }
     });
+    const maxStatusDistanceKm = 0.2;
 
     const stations: ChargingStation[] = elements
       .map((el: any) => {
@@ -381,13 +396,24 @@ export async function fetchChargingStations(): Promise<ChargingStation[]> {
         const opening = tags.opening_hours;
         const availability = deriveAvailability(tags);
         const statusLabel = deriveStatusLabel(tags);
-        const external =
+        const directExternal =
           statusByCoord.get(coordinateKey(lon, lat)) ||
           statusByName.get(name.toLowerCase()) ||
           statusByName.get(toTitleCase(name).toLowerCase());
+        const nearestExternal =
+          directExternal ||
+          externalStatuses.reduce<ExternalStatus | null>((closest, status) => {
+            const distance = haversineDistanceKm([lon, lat], status.coordinates);
+            if (distance > maxStatusDistanceKm) return closest;
+            if (!closest) return status;
+            const currentDistance = haversineDistanceKm([lon, lat], closest.coordinates);
+            return distance < currentDistance ? status : closest;
+          }, null);
         const mergedAvailability =
-          availability !== "unknown" ? availability : external?.availability ?? availability;
-        const mergedStatusLabel = statusLabel || external?.statusLabel;
+          availability !== "unknown"
+            ? availability
+            : nearestExternal?.availability ?? availability;
+        const mergedStatusLabel = statusLabel || nearestExternal?.statusLabel;
 
         return {
           id: `${el.type}/${el.id}`,
