@@ -195,6 +195,79 @@ type ExternalStatus = {
   coordinates: [number, number];
 };
 
+function deriveStatusFromProps(props: Record<string, any>) {
+  const directValue =
+    props.status ??
+    props.availability ??
+    props.availability_status ??
+    props.operational_status ??
+    props.operationalStatus ??
+    props.status_text ??
+    props.statusLabel ??
+    props.status_description ??
+    props.status_desc ??
+    props.charging_status ??
+    props.connector_status ??
+    props.state ??
+    props.condition ??
+    props.is_available ??
+    props.isAvailable ??
+    props.is_operational ??
+    props.isOperational ??
+    props.operational;
+
+  if (directValue !== undefined && directValue !== null && directValue !== "") {
+    return directValue;
+  }
+
+  const availableCount = Number(
+    props.available ?? props.available_count ?? props.free ?? props.free_count ?? 0
+  );
+  const occupiedCount = Number(
+    props.occupied ?? props.occupied_count ?? props.busy ?? props.busy_count ?? 0
+  );
+  const outOfServiceCount = Number(
+    props.out_of_service ??
+      props.out_of_service_count ??
+      props.out_of_order ??
+      props.out_of_order_count ??
+      props.maintenance ??
+      props.maintenance_count ??
+      props.offline ??
+      props.offline_count ??
+      0
+  );
+
+  if (Number.isFinite(availableCount) && availableCount > 0) return "available";
+  if (Number.isFinite(occupiedCount) && occupiedCount > 0) return "occupied";
+  if (Number.isFinite(outOfServiceCount) && outOfServiceCount > 0) return "out_of_service";
+
+  const connectors = props.connectors ?? props.connector ?? props.outlets ?? props.ports;
+  if (Array.isArray(connectors)) {
+    for (const connector of connectors) {
+      if (!connector || typeof connector !== "object") continue;
+      const connectorStatus =
+        connector.status ??
+        connector.availability ??
+        connector.state ??
+        connector.condition ??
+        connector.is_available ??
+        connector.isAvailable;
+      if (connectorStatus !== undefined && connectorStatus !== null && connectorStatus !== "") {
+        return connectorStatus;
+      }
+    }
+  }
+
+  const statusCode =
+    props.status_code ?? props.statusCode ?? props.availability_code ?? props.availabilityCode;
+  if (statusCode !== undefined && statusCode !== null && statusCode !== "") {
+    return statusCode;
+  }
+
+  return undefined;
+}
+
 function parseCsv(text: string) {
   const lines = text.split(/\r?\n/).filter((line) => line.trim());
   if (lines.length < 2) return [];
@@ -220,25 +293,7 @@ function parseExternalStatusItem(item: any): ExternalStatus | null {
     props.station_name ||
     props.charger_name ||
     props.location;
-  const statusValue =
-    props.status ??
-    props.availability ??
-    props.availability_status ??
-    props.operational_status ??
-    props.operationalStatus ??
-    props.status_text ??
-    props.statusLabel ??
-    props.status_description ??
-    props.status_desc ??
-    props.charging_status ??
-    props.connector_status ??
-    props.state ??
-    props.condition ??
-    props.is_available ??
-    props.isAvailable ??
-    props.is_operational ??
-    props.isOperational ??
-    props.operational;
+  const statusValue = deriveStatusFromProps(props);
 
   const latRaw =
     props.lat ??
