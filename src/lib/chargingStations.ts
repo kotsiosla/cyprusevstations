@@ -17,6 +17,7 @@ export interface ChargingStation {
   open24_7?: boolean;
   openingHours?: string;
   availability?: "available" | "occupied" | "out_of_service" | "unknown";
+  statusLabel?: string;
   distanceKm?: number;
   distanceLabel?: string;
   coordinates: [number, number];
@@ -100,11 +101,16 @@ function normalizeAvailability(value?: string) {
   return "unknown" as const;
 }
 
-function deriveAvailability(tags: Record<string, string | undefined>) {
+function findStatusCandidates(tags: Record<string, string | undefined>) {
   const candidates: string[] = [];
   const direct =
     tags["charging:status"] ||
     tags["charging_station:status"] ||
+    tags["status:charging_station"] ||
+    tags["charging_station:state"] ||
+    tags["state"] ||
+    tags["condition"] ||
+    tags["charging_station:condition"] ||
     tags["availability"] ||
     tags["operational_status"] ||
     tags["status"];
@@ -112,11 +118,21 @@ function deriveAvailability(tags: Record<string, string | undefined>) {
 
   Object.entries(tags).forEach(([key, value]) => {
     if (!value) return;
-    if (key.endsWith(":status") || key.endsWith(":availability")) {
+    if (
+      key.endsWith(":status") ||
+      key.endsWith(":availability") ||
+      key.endsWith(":state") ||
+      key.endsWith(":condition")
+    ) {
       candidates.push(value);
     }
   });
 
+  return candidates.map((value) => value.trim()).filter(Boolean);
+}
+
+function deriveAvailability(tags: Record<string, string | undefined>) {
+  const candidates = findStatusCandidates(tags);
   if (!candidates.length) return "unknown" as const;
 
   const normalized = candidates.map(normalizeAvailability);
@@ -124,6 +140,12 @@ function deriveAvailability(tags: Record<string, string | undefined>) {
   if (normalized.includes("occupied")) return "occupied" as const;
   if (normalized.includes("available")) return "available" as const;
   return "unknown" as const;
+}
+
+function deriveStatusLabel(tags: Record<string, string | undefined>) {
+  const candidates = findStatusCandidates(tags);
+  if (!candidates.length) return undefined;
+  return toTitleCase(candidates[0].replace(/[_-]+/g, " "));
 }
 
 async function fetchWithFailover(body: string) {
@@ -162,6 +184,7 @@ export async function fetchChargingStations(): Promise<ChargingStation[]> {
         const address = buildAddress(tags);
         const opening = tags.opening_hours;
         const availability = deriveAvailability(tags);
+        const statusLabel = deriveStatusLabel(tags);
 
         return {
           id: `${el.type}/${el.id}`,
@@ -176,6 +199,7 @@ export async function fetchChargingStations(): Promise<ChargingStation[]> {
           open24_7: opening?.includes("24/7"),
           openingHours: opening,
           availability,
+          statusLabel,
           coordinates: [lon, lat]
         } as ChargingStation;
       })
