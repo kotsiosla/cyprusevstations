@@ -247,33 +247,49 @@ function deriveStatusFromProps(props: Record<string, any>) {
     );
   };
 
+  const deriveStatusFromCounts = (record?: Record<string, any>) => {
+    if (!record || typeof record !== "object") return undefined;
+    const availableCount = Number(
+      record.available ?? record.available_count ?? record.free ?? record.free_count ?? 0
+    );
+    const occupiedCount = Number(
+      record.occupied ?? record.occupied_count ?? record.busy ?? record.busy_count ?? 0
+    );
+    const outOfServiceCount = Number(
+      record.out_of_service ??
+        record.out_of_service_count ??
+        record.out_of_order ??
+        record.out_of_order_count ??
+        record.maintenance ??
+        record.maintenance_count ??
+        record.offline ??
+        record.offline_count ??
+        0
+    );
+
+    if (Number.isFinite(availableCount) && availableCount > 0) return "available";
+    if (Number.isFinite(occupiedCount) && occupiedCount > 0) return "occupied";
+    if (Number.isFinite(outOfServiceCount) && outOfServiceCount > 0) return "out_of_service";
+    return undefined;
+  };
+
   const directValue = readStatusValue(props);
 
   if (directValue !== undefined && directValue !== null && directValue !== "") {
-    return directValue;
+    if (typeof directValue === "object") {
+      const countBased = deriveStatusFromCounts(directValue as Record<string, any>);
+      if (countBased) return countBased;
+      const nestedValue = readStatusValue(directValue as Record<string, any>);
+      if (nestedValue !== undefined && nestedValue !== null && nestedValue !== "") {
+        return nestedValue;
+      }
+    } else {
+      return directValue;
+    }
   }
 
-  const availableCount = Number(
-    props.available ?? props.available_count ?? props.free ?? props.free_count ?? 0
-  );
-  const occupiedCount = Number(
-    props.occupied ?? props.occupied_count ?? props.busy ?? props.busy_count ?? 0
-  );
-  const outOfServiceCount = Number(
-    props.out_of_service ??
-      props.out_of_service_count ??
-      props.out_of_order ??
-      props.out_of_order_count ??
-      props.maintenance ??
-      props.maintenance_count ??
-      props.offline ??
-      props.offline_count ??
-      0
-  );
-
-  if (Number.isFinite(availableCount) && availableCount > 0) return "available";
-  if (Number.isFinite(occupiedCount) && occupiedCount > 0) return "occupied";
-  if (Number.isFinite(outOfServiceCount) && outOfServiceCount > 0) return "out_of_service";
+  const countBased = deriveStatusFromCounts(props);
+  if (countBased) return countBased;
 
   const connectors = props.connectors ?? props.connector ?? props.outlets ?? props.ports;
   if (Array.isArray(connectors)) {
