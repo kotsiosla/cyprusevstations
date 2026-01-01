@@ -75,17 +75,21 @@ function parseConnectors(tags: Record<string, string | undefined>) {
     .map(([, label]) => label);
 }
 
+// OCPP status mapping:
+// - Available -> available
+// - Occupied/Charging/Reserved/Finishing/Preparing/SuspendedEVSE/SuspendedEV -> occupied
+// - Faulted/Unavailable -> out_of_service
 const OCPP_STATUS_MAP: Record<string, ChargingStation["availability"]> = {
   available: "available",
   occupied: "occupied",
   charging: "occupied",
-  faulted: "out_of_service",
-  unavailable: "out_of_service",
   reserved: "occupied",
-  preparing: "occupied",
   finishing: "occupied",
+  preparing: "occupied",
+  suspendedevse: "occupied",
   suspendedev: "occupied",
-  suspendedevse: "occupied"
+  faulted: "out_of_service",
+  unavailable: "out_of_service"
 };
 
 function normalizeAvailability(value?: string | number | boolean) {
@@ -93,10 +97,9 @@ function normalizeAvailability(value?: string | number | boolean) {
   if (typeof value === "boolean") {
     return value ? ("available" as const) : ("out_of_service" as const);
   }
-  const normalized = String(value).toLowerCase().trim().replace(/[\s_-]+/g, "");
-  if (normalized in OCPP_STATUS_MAP) {
-    return OCPP_STATUS_MAP[normalized];
-  }
+  const normalized = String(value).toLowerCase().trim();
+  const ocppAvailability = OCPP_STATUS_MAP[normalized];
+  if (ocppAvailability) return ocppAvailability;
   if (
     ["available", "free", "yes", "open", "in_service", "operational", "working"].includes(
       normalized

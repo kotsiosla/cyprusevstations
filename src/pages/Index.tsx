@@ -13,7 +13,7 @@ import { Switch } from '@/components/ui/switch';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 
 const Index = () => {
-  const [stations, setStations] = useState<ChargingStation[]>(sampleChargingStations);
+  const [stations, setStations] = useState<ChargingStation[]>([]);
   const [selectedStation, setSelectedStation] = useState<ChargingStation | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [userLocation, setUserLocation] = useState<[number, number] | null>(null);
