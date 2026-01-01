@@ -75,9 +75,12 @@ function parseConnectors(tags: Record<string, string | undefined>) {
     .map(([, label]) => label);
 }
 
-function normalizeAvailability(value?: string) {
-  if (!value) return "unknown" as const;
-  const normalized = value.toLowerCase().trim();
+function normalizeAvailability(value?: string | number | boolean) {
+  if (value === undefined || value === null || value === "") return "unknown" as const;
+  if (typeof value === "boolean") {
+    return value ? ("available" as const) : ("out_of_service" as const);
+  }
+  const normalized = String(value).toLowerCase().trim();
   if (
     ["available", "free", "yes", "open", "in_service", "operational", "working"].includes(
       normalized
@@ -88,6 +91,7 @@ function normalizeAvailability(value?: string) {
   ) {
     return "available" as const;
   }
+  if (["1", "true"].includes(normalized)) return "available" as const;
   if (
     ["occupied", "busy", "in_use"].includes(normalized) ||
     normalized.includes("occupied") ||
@@ -95,6 +99,7 @@ function normalizeAvailability(value?: string) {
   ) {
     return "occupied" as const;
   }
+  if (["2", "inuse"].includes(normalized)) return "occupied" as const;
   if (
     ["out_of_service", "out-of-service", "maintenance", "closed", "no", "inactive", "fault"].includes(
       normalized
@@ -108,6 +113,7 @@ function normalizeAvailability(value?: string) {
   ) {
     return "out_of_service" as const;
   }
+  if (["0", "false", "offline", "down"].includes(normalized)) return "out_of_service" as const;
   return "unknown" as const;
 }
 
@@ -158,9 +164,10 @@ function deriveStatusLabel(tags: Record<string, string | undefined>) {
   return toTitleCase(candidates[0].replace(/[_-]+/g, " "));
 }
 
-function normalizeStatusLabel(value?: string) {
-  if (!value) return undefined;
-  return toTitleCase(value.replace(/[_-]+/g, " ").trim());
+function normalizeStatusLabel(value?: string | number | boolean) {
+  if (value === undefined || value === null || value === "") return undefined;
+  if (typeof value === "boolean") return value ? "Available" : "Out Of Service";
+  return toTitleCase(String(value).replace(/[_-]+/g, " ").trim());
 }
 
 function coordinateKey(lon: number, lat: number, precision = 4) {
@@ -192,15 +199,34 @@ function parseExternalStatusItem(item: any): ExternalStatus | null {
   if (!item || typeof item !== "object") return null;
 
   const props = item.properties ?? item;
-  const name = props.name || props.title || props.station || props.location;
+  const name =
+    props.name ||
+    props.title ||
+    props.station ||
+    props.station_name ||
+    props.charger_name ||
+    props.location;
   const statusValue =
-    props.status ||
-    props.availability ||
-    props.operational_status ||
-    props.state ||
-    props.condition;
+    props.status ??
+    props.availability ??
+    props.availability_status ??
+    props.operational_status ??
+    props.operationalStatus ??
+    props.status_text ??
+    props.statusLabel ??
+    props.status_description ??
+    props.status_desc ??
+    props.charging_status ??
+    props.connector_status ??
+    props.state ??
+    props.condition ??
+    props.is_available ??
+    props.isAvailable ??
+    props.is_operational ??
+    props.isOperational ??
+    props.operational;
 
-  const lat =
+  const latRaw =
     props.lat ??
     props.latitude ??
     props.y ??
@@ -208,7 +234,7 @@ function parseExternalStatusItem(item: any): ExternalStatus | null {
     item.latitude ??
     item.y ??
     item?.geometry?.coordinates?.[1];
-  const lon =
+  const lonRaw =
     props.lon ??
     props.lng ??
     props.longitude ??
@@ -218,6 +244,9 @@ function parseExternalStatusItem(item: any): ExternalStatus | null {
     item.longitude ??
     item.x ??
     item?.geometry?.coordinates?.[0];
+
+  const lat = typeof latRaw === "string" ? Number(latRaw) : latRaw;
+  const lon = typeof lonRaw === "string" ? Number(lonRaw) : lonRaw;
 
   if (typeof lat !== "number" || typeof lon !== "number") return null;
 
