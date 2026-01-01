@@ -67,11 +67,43 @@ function parseConnectors(tags: Record<string, string | undefined>) {
 function normalizeAvailability(value?: string) {
   if (!value) return "unknown" as const;
   const normalized = value.toLowerCase();
-  if (["available", "free", "yes", "open"].includes(normalized)) return "available" as const;
+  if (["available", "free", "yes", "open", "in_service", "operational", "working"].includes(normalized)) {
+    return "available" as const;
+  }
   if (["occupied", "busy", "in_use"].includes(normalized)) return "occupied" as const;
-  if (["out_of_service", "out-of-service", "maintenance", "closed", "no"].includes(normalized)) {
+  if (
+    ["out_of_service", "out-of-service", "maintenance", "closed", "no", "inactive", "fault"].includes(
+      normalized
+    )
+  ) {
     return "out_of_service" as const;
   }
+  return "unknown" as const;
+}
+
+function deriveAvailability(tags: Record<string, string | undefined>) {
+  const candidates: string[] = [];
+  const direct =
+    tags["charging:status"] ||
+    tags["charging_station:status"] ||
+    tags["availability"] ||
+    tags["operational_status"] ||
+    tags["status"];
+  if (direct) candidates.push(direct);
+
+  Object.entries(tags).forEach(([key, value]) => {
+    if (!value) return;
+    if (key.endsWith(":status") || key.endsWith(":availability")) {
+      candidates.push(value);
+    }
+  });
+
+  if (!candidates.length) return "unknown" as const;
+
+  const normalized = candidates.map(normalizeAvailability);
+  if (normalized.includes("out_of_service")) return "out_of_service" as const;
+  if (normalized.includes("occupied")) return "occupied" as const;
+  if (normalized.includes("available")) return "available" as const;
   return "unknown" as const;
 }
 
@@ -110,9 +142,7 @@ export async function fetchChargingStations(): Promise<ChargingStation[]> {
         const city = tags["addr:city"] || tags["addr:suburb"] || tags["addr:place"];
         const address = buildAddress(tags);
         const opening = tags.opening_hours;
-        const availability = normalizeAvailability(
-          tags["charging:status"] || tags["availability"] || tags["status"]
-        );
+        const availability = deriveAvailability(tags);
 
         return {
           id: `${el.type}/${el.id}`,
