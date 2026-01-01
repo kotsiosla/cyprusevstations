@@ -28,7 +28,8 @@ const ChargingStationList = ({
     }
   };
 
-  const availabilityLabel = (availability?: ChargingStation["availability"]) => {
+  const availabilityLabel = (station: ChargingStation) => {
+    const availability = station.availability;
     switch (availability) {
       case "available":
         return "Available";
@@ -37,7 +38,7 @@ const ChargingStationList = ({
       case "out_of_service":
         return "Out of service";
       default:
-        return "Status unknown";
+        return station.statusLabel || "Status unknown";
     }
   };
 
@@ -93,7 +94,7 @@ const ChargingStationList = ({
                       )}
                     >
                       <CircleDot className="w-3 h-3" />
-                      {availabilityLabel(station.availability)}
+                      {availabilityLabel(station)}
                     </Badge>
                   </div>
                 </div>
@@ -113,7 +114,7 @@ const ChargingStationList = ({
                   variant="outline"
                   className={cn("text-[0.65rem] border", availabilityStyles(station.availability))}
                 >
-                  {availabilityLabel(station.availability)}
+                  {availabilityLabel(station)}
                 </Badge>
                 <ArrowRight
                   className={cn(

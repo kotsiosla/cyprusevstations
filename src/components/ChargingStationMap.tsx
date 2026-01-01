@@ -87,7 +87,7 @@ export default function ChargingStationMap({
           ? "Occupied"
           : station.availability === "out_of_service"
           ? "Out of service"
-          : "Status unknown";
+          : station.statusLabel || "Status unknown";
       const popup = new maplibregl.Popup({ offset: 20 }).setHTML(
         `<div class="text-sm font-semibold">${station.name}</div>` +
           (station.address
