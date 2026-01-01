@@ -66,15 +66,34 @@ function parseConnectors(tags: Record<string, string | undefined>) {
 
 function normalizeAvailability(value?: string) {
   if (!value) return "unknown" as const;
-  const normalized = value.toLowerCase();
-  if (["available", "free", "yes", "open", "in_service", "operational", "working"].includes(normalized)) {
+  const normalized = value.toLowerCase().trim();
+  if (
+    ["available", "free", "yes", "open", "in_service", "operational", "working"].includes(
+      normalized
+    ) ||
+    normalized.includes("available") ||
+    normalized.includes("operational") ||
+    normalized.includes("working")
+  ) {
     return "available" as const;
   }
-  if (["occupied", "busy", "in_use"].includes(normalized)) return "occupied" as const;
+  if (
+    ["occupied", "busy", "in_use"].includes(normalized) ||
+    normalized.includes("occupied") ||
+    normalized.includes("busy")
+  ) {
+    return "occupied" as const;
+  }
   if (
     ["out_of_service", "out-of-service", "maintenance", "closed", "no", "inactive", "fault"].includes(
       normalized
-    )
+    ) ||
+    normalized.includes("out of service") ||
+    normalized.includes("out-of-service") ||
+    normalized.includes("maintenance") ||
+    normalized.includes("fault") ||
+    normalized.includes("broken") ||
+    normalized.includes("fix")
   ) {
     return "out_of_service" as const;
   }
