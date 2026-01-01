@@ -11,6 +11,16 @@ const CYPRUS_STATUS_SOURCES = [
   "https://raw.githubusercontent.com/kotsiosla/cyprusevstations/main/data/evstations.json",
   "https://raw.githubusercontent.com/kotsiosla/cyprusevstations/main/charging-stations.json"
 ];
+const PLACETOPLUG_STATUS_SOURCES = [
+  "https://placetoplug.com/api/charging-stations.geojson",
+  "https://placetoplug.com/api/charging-stations"
+];
+const PLACETOPLUG_API_KEY =
+  typeof import.meta !== "undefined" ? (import.meta as any).env?.VITE_PLACETOPLUG_API_KEY : undefined;
+const PLACETOPLUG_API_TOKEN =
+  typeof import.meta !== "undefined"
+    ? (import.meta as any).env?.VITE_PLACETOPLUG_API_TOKEN
+    : undefined;
 
 const CYPRUS_STATUS_REPO = "https://api.github.com/repos/kotsiosla/cyprusevstations/contents";
 
@@ -349,6 +359,57 @@ function parseCsv(text: string) {
   });
 }
 
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function fetchWithRetry(url: string, options: RequestInit, retries = 2) {
+  let lastError: unknown = null;
+  for (let attempt = 0; attempt <= retries; attempt += 1) {
+    try {
+      const res = await fetch(url, options);
+      if (res.ok) return res;
+      if (res.status === 429 || res.status === 503) {
+        const retryAfterHeader = res.headers.get("retry-after");
+        const retryAfterSeconds = retryAfterHeader ? Number(retryAfterHeader) : NaN;
+        const backoffMs = Number.isFinite(retryAfterSeconds)
+          ? retryAfterSeconds * 1000
+          : 500 * (attempt + 1);
+        await sleep(backoffMs);
+        lastError = new Error(`Rate limited (${res.status})`);
+        continue;
+      }
+      lastError = new Error(`HTTP ${res.status}`);
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError ?? new Error("Request failed");
+}
+
+async function parseExternalPayload(res: Response) {
+  const contentType = res.headers.get("content-type") || "";
+  const data = contentType.includes("text/csv") ? await res.text() : await res.json();
+  const items: any[] = Array.isArray(data)
+    ? data
+    : Array.isArray(data?.stations)
+    ? data.stations
+    : Array.isArray(data?.features)
+    ? data.features
+    : Array.isArray(data?.results)
+    ? data.results
+    : Array.isArray(data?.items)
+    ? data.items
+    : Array.isArray(data?.data)
+    ? data.data
+    : Array.isArray(data?.records)
+    ? data.records
+    : typeof data === "string"
+    ? parseCsv(data)
+    : [];
+  return items;
+}
+
 function parseExternalStatusItem(item: any): ExternalStatus | null {
   if (!item || typeof item !== "object") return null;
 
@@ -408,6 +469,28 @@ function parseExternalStatusItem(item: any): ExternalStatus | null {
   };
 }
 
+async function fetchPlaceToPlugStatusData(): Promise<ExternalStatus[]> {
+  const headers: Record<string, string> = { Accept: "application/json,text/plain" };
+  if (PLACETOPLUG_API_KEY) headers["X-API-Key"] = PLACETOPLUG_API_KEY;
+  if (PLACETOPLUG_API_TOKEN) headers.Authorization = `Bearer ${PLACETOPLUG_API_TOKEN}`;
+
+  for (const url of PLACETOPLUG_STATUS_SOURCES) {
+    try {
+      const res = await fetchWithRetry(url, { headers }, 2);
+      if (!res.ok) continue;
+      const items = await parseExternalPayload(res);
+      if (!items.length) continue;
+      const parsed = items
+        .map(parseExternalStatusItem)
+        .filter((item): item is ExternalStatus => Boolean(item));
+      if (parsed.length) return parsed;
+    } catch {
+      continue;
+    }
+  }
+  return [];
+}
+
 async function fetchGithubContents(path = "") {
   const url = path ? `${CYPRUS_STATUS_REPO}/${path}` : CYPRUS_STATUS_REPO;
   const res = await fetch(url, { headers: { Accept: "application/vnd.github+json" } });
@@ -439,6 +522,9 @@ async function discoverStatusFiles() {
 }
 
 async function fetchExternalStatusData(): Promise<ExternalStatus[]> {
+  const placeToPlugStatuses = await fetchPlaceToPlugStatusData();
+  if (placeToPlugStatuses.length) return placeToPlugStatuses;
+
   const candidateSources = [...CYPRUS_STATUS_SOURCES];
   try {
     const discovered = await discoverStatusFiles();
@@ -455,25 +541,7 @@ async function fetchExternalStatusData(): Promise<ExternalStatus[]> {
     try {
       const res = await fetch(url, { headers: { Accept: "application/json,text/plain" } });
       if (!res.ok) continue;
-      const contentType = res.headers.get("content-type") || "";
-      const data = contentType.includes("text/csv") ? await res.text() : await res.json();
-      const items: any[] = Array.isArray(data)
-        ? data
-        : Array.isArray(data?.stations)
-        ? data.stations
-        : Array.isArray(data?.features)
-        ? data.features
-        : Array.isArray(data?.results)
-        ? data.results
-        : Array.isArray(data?.items)
-        ? data.items
-        : Array.isArray(data?.data)
-        ? data.data
-        : Array.isArray(data?.records)
-        ? data.records
-        : typeof data === "string"
-        ? parseCsv(data)
-        : [];
+      const items = await parseExternalPayload(res);
 
       if (!items.length) continue;
 
