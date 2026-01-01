@@ -4,12 +4,7 @@ const OVERPASS_MIRRORS = [
   "https://overpass.nchc.org.tw/api/interpreter"
 ];
 const CYPRUS_STATUS_SOURCES = [
-  "https://fixcyprus.cy/gnosis/open/api/nap/datasets/electric_vehicle_chargers/",
-  "https://raw.githubusercontent.com/kotsiosla/cyprusevstations/main/stations.json",
-  "https://raw.githubusercontent.com/kotsiosla/cyprusevstations/main/data/stations.json",
-  "https://raw.githubusercontent.com/kotsiosla/cyprusevstations/main/evstations.json",
-  "https://raw.githubusercontent.com/kotsiosla/cyprusevstations/main/data/evstations.json",
-  "https://raw.githubusercontent.com/kotsiosla/cyprusevstations/main/charging-stations.json"
+  "https://traffic4cyprus.org.cy/dataset/electricvehiclecharges/resource/471c1040-cda9-47b8-9b47-2a9065aeddba/download"
 ];
 const PLACETOPLUG_STATUS_SOURCES = [
   "https://placetoplug.com/api/charging-stations.geojson",
@@ -22,7 +17,9 @@ const PLACETOPLUG_API_TOKEN =
     ? (import.meta as any).env?.VITE_PLACETOPLUG_API_TOKEN
     : undefined;
 
-const CYPRUS_STATUS_REPO = "https://api.github.com/repos/kotsiosla/cyprusevstations/contents";
+const PLACETOPLUG_ENDPOINT =
+  import.meta.env.VITE_PLACETOPLUG_ENDPOINT ?? "https://placetoplug.com/api/chargepoints";
+const PLACETOPLUG_API_KEY = import.meta.env.VITE_PLACETOPLUG_API_KEY;
 
 export interface ChargingStation {
   id: string;
@@ -219,6 +216,8 @@ function haversineDistanceKm(from: [number, number], to: [number, number]) {
 
 type ExternalStatus = {
   name?: string;
+  address?: string;
+  power?: string;
   statusLabel?: string;
   availability?: ChargingStation["availability"];
   coordinates: [number, number];
@@ -359,55 +358,15 @@ function parseCsv(text: string) {
   });
 }
 
-function sleep(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function fetchWithRetry(url: string, options: RequestInit, retries = 2) {
-  let lastError: unknown = null;
-  for (let attempt = 0; attempt <= retries; attempt += 1) {
-    try {
-      const res = await fetch(url, options);
-      if (res.ok) return res;
-      if (res.status === 429 || res.status === 503) {
-        const retryAfterHeader = res.headers.get("retry-after");
-        const retryAfterSeconds = retryAfterHeader ? Number(retryAfterHeader) : NaN;
-        const backoffMs = Number.isFinite(retryAfterSeconds)
-          ? retryAfterSeconds * 1000
-          : 500 * (attempt + 1);
-        await sleep(backoffMs);
-        lastError = new Error(`Rate limited (${res.status})`);
-        continue;
-      }
-      lastError = new Error(`HTTP ${res.status}`);
-    } catch (error) {
-      lastError = error;
-    }
-  }
-  throw lastError ?? new Error("Request failed");
-}
-
-async function parseExternalPayload(res: Response) {
-  const contentType = res.headers.get("content-type") || "";
-  const data = contentType.includes("text/csv") ? await res.text() : await res.json();
-  const items: any[] = Array.isArray(data)
-    ? data
-    : Array.isArray(data?.stations)
-    ? data.stations
-    : Array.isArray(data?.features)
-    ? data.features
-    : Array.isArray(data?.results)
-    ? data.results
-    : Array.isArray(data?.items)
-    ? data.items
-    : Array.isArray(data?.data)
-    ? data.data
-    : Array.isArray(data?.records)
-    ? data.records
-    : typeof data === "string"
-    ? parseCsv(data)
-    : [];
-  return items;
+function extractExternalItems(data: any): any[] {
+  if (Array.isArray(data)) return data;
+  if (Array.isArray(data?.stations)) return data.stations;
+  if (Array.isArray(data?.features)) return data.features;
+  if (Array.isArray(data?.results)) return data.results;
+  if (Array.isArray(data?.items)) return data.items;
+  if (Array.isArray(data?.data)) return data.data;
+  if (Array.isArray(data?.records)) return data.records;
+  return [];
 }
 
 function parseExternalStatusItem(item: any): ExternalStatus | null {
@@ -421,6 +380,23 @@ function parseExternalStatusItem(item: any): ExternalStatus | null {
     props.station_name ||
     props.charger_name ||
     props.location;
+  const address =
+    props.address ||
+    props.location_description ||
+    props.locationDescription ||
+    props.location_address ||
+    props.address_line ||
+    props.street ||
+    props.site ||
+    props.description;
+  const power =
+    props.power ||
+    props.power_kw ||
+    props.power_kwh ||
+    props.output ||
+    props.charge_output ||
+    props.charger_type ||
+    props.type;
   const statusValue = deriveStatusFromProps(props);
 
   const latRaw =
@@ -463,85 +439,144 @@ function parseExternalStatusItem(item: any): ExternalStatus | null {
 
   return {
     name: name ? String(name) : undefined,
+    address: address ? String(address) : undefined,
+    power: power ? String(power) : undefined,
     statusLabel,
     availability,
     coordinates: [lon, lat]
   };
 }
 
-async function fetchPlaceToPlugStatusData(): Promise<ExternalStatus[]> {
-  const headers: Record<string, string> = { Accept: "application/json,text/plain" };
-  if (PLACETOPLUG_API_KEY) headers["X-API-Key"] = PLACETOPLUG_API_KEY;
-  if (PLACETOPLUG_API_TOKEN) headers.Authorization = `Bearer ${PLACETOPLUG_API_TOKEN}`;
+function parseXmlStations(xmlText: string): ExternalStatus[] {
+  if (typeof DOMParser === "undefined") return [];
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(xmlText, "application/xml");
+  const parserError = doc.getElementsByTagName("parsererror");
+  if (parserError.length) return [];
 
-  for (const url of PLACETOPLUG_STATUS_SOURCES) {
+  const elements = Array.from(doc.getElementsByTagName("*"));
+  const stations: ExternalStatus[] = [];
+
+  const getChildText = (el: Element, tags: string[]) => {
+    const lowerTags = tags.map((tag) => tag.toLowerCase());
+    const children = Array.from(el.children);
+    for (const child of children) {
+      const tagName = child.tagName.toLowerCase();
+      if (lowerTags.includes(tagName)) {
+        const text = child.textContent?.trim();
+        if (text) return text;
+      }
+    }
+    return undefined;
+  };
+
+  const latTags = ["lat", "latitude", "y"];
+  const lonTags = ["lon", "lng", "longitude", "x"];
+  const nameTags = ["name", "station", "station_name", "title"];
+  const addressTags = ["address", "location", "location_description", "street", "site"];
+  const powerTags = ["power", "power_kw", "output", "charger_type", "type"];
+
+  elements.forEach((el) => {
+    const latText = getChildText(el, latTags);
+    const lonText = getChildText(el, lonTags);
+    if (!latText || !lonText) return;
+    const lat = Number(latText);
+    const lon = Number(lonText);
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
+
+    const name = getChildText(el, nameTags);
+    const address = getChildText(el, addressTags);
+    const power = getChildText(el, powerTags);
+
+    stations.push({
+      name: name ?? undefined,
+      address: address ?? undefined,
+      power: power ?? undefined,
+      availability: "unknown",
+      coordinates: [lon, lat]
+    });
+  });
+
+  return stations;
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function fetchWithRetries(
+  url: string,
+  options: RequestInit,
+  retries = 2,
+  backoffMs = 600
+) {
+  let lastError: unknown = null;
+  for (let attempt = 0; attempt <= retries; attempt += 1) {
     try {
-      const res = await fetchWithRetry(url, { headers }, 2);
-      if (!res.ok) continue;
-      const items = await parseExternalPayload(res);
-      if (!items.length) continue;
-      const parsed = items
-        .map(parseExternalStatusItem)
-        .filter((item): item is ExternalStatus => Boolean(item));
-      if (parsed.length) return parsed;
-    } catch {
-      continue;
+      const res = await fetch(url, options);
+      if (res.status === 429 || res.status === 503) {
+        if (attempt < retries) {
+          await sleep(backoffMs * (attempt + 1));
+          continue;
+        }
+      }
+      if (!res.ok) return null;
+      return res;
+    } catch (error) {
+      lastError = error;
+      if (attempt < retries) {
+        await sleep(backoffMs * (attempt + 1));
+        continue;
+      }
     }
   }
-  return [];
+  if (lastError) {
+    console.warn("Failed to fetch external status data:", lastError);
+  }
+  return null;
 }
 
-async function fetchGithubContents(path = "") {
-  const url = path ? `${CYPRUS_STATUS_REPO}/${path}` : CYPRUS_STATUS_REPO;
-  const res = await fetch(url, { headers: { Accept: "application/vnd.github+json" } });
-  if (!res.ok) return [];
-  const data = await res.json();
-  return Array.isArray(data) ? data : [];
-}
+async function fetchPlaceToPlugStatusData(): Promise<ExternalStatus[]> {
+  if (!PLACETOPLUG_ENDPOINT) return [];
+  const headers: Record<string, string> = { Accept: "application/json,text/plain" };
+  if (PLACETOPLUG_API_KEY) {
+    headers.Authorization = `Bearer ${PLACETOPLUG_API_KEY}`;
+    headers["x-api-key"] = PLACETOPLUG_API_KEY;
+  }
 
-async function discoverStatusFiles() {
-  const entries = await fetchGithubContents();
-  const directories = entries
-    .filter((entry: any) => entry.type === "dir")
-    .map((entry: any) => entry.path)
-    .filter((path: string) => /data|dataset|geo|json/i.test(path));
-  const files = entries.filter((entry: any) => entry.type === "file");
+  const res = await fetchWithRetries(PLACETOPLUG_ENDPOINT, { headers });
+  if (!res) return [];
+  const contentType = res.headers.get("content-type") || "";
+  const data = contentType.includes("text/csv") ? await res.text() : await res.json();
+  const items = typeof data === "string" ? parseCsv(data) : extractExternalItems(data);
+  if (!items.length) return [];
 
-  const nestedFiles = await Promise.all(
-    directories.map((path: string) => fetchGithubContents(path))
-  );
-
-  return [...files, ...nestedFiles.flat()].filter((entry: any) => {
-    const name = String(entry.name || "").toLowerCase();
-    return (
-      entry.type === "file" &&
-      (name.endsWith(".json") || name.endsWith(".geojson") || name.endsWith(".csv")) &&
-      /station|charger|charging|ev/.test(name)
-    );
-  });
+  return items
+    .map(parseExternalStatusItem)
+    .filter((item): item is ExternalStatus => Boolean(item));
 }
 
 async function fetchExternalStatusData(): Promise<ExternalStatus[]> {
-  const placeToPlugStatuses = await fetchPlaceToPlugStatusData();
-  if (placeToPlugStatuses.length) return placeToPlugStatuses;
+  const placeToPlug = await fetchPlaceToPlugStatusData();
+  if (placeToPlug.length) return placeToPlug;
 
   const candidateSources = [...CYPRUS_STATUS_SOURCES];
-  try {
-    const discovered = await discoverStatusFiles();
-    discovered.forEach((entry: any) => {
-      if (entry.download_url) {
-        candidateSources.push(entry.download_url);
-      }
-    });
-  } catch {
-    // ignore discovery errors
-  }
 
   for (const url of candidateSources) {
     try {
-      const res = await fetch(url, { headers: { Accept: "application/json,text/plain" } });
+      const res = await fetch(url, { headers: { Accept: "application/xml,text/plain" } });
       if (!res.ok) continue;
-      const items = await parseExternalPayload(res);
+      const contentType = res.headers.get("content-type") || "";
+      if (contentType.includes("xml") || contentType.includes("text/plain")) {
+        const xmlText = await res.text();
+        const parsed = parseXmlStations(xmlText);
+        if (parsed.length) return parsed;
+        continue;
+      }
+
+      const data = contentType.includes("text/csv") ? await res.text() : await res.json();
+      const items: any[] =
+        typeof data === "string" ? parseCsv(data) : extractExternalItems(data);
 
       if (!items.length) continue;
 
@@ -603,20 +638,35 @@ export async function fetchChargingStations(): Promise<ChargingStation[]> {
         const city = tags["addr:city"] || tags["addr:suburb"] || tags["addr:place"];
         const address = buildAddress(tags);
         const opening = tags.opening_hours;
+        const coordKey = coordinateKey(lon, lat);
+        const nameKey = name?.toLowerCase();
+        let matchedStatus =
+          statusByCoord.get(coordKey) || (nameKey ? statusByName.get(nameKey) : undefined);
+        if (!matchedStatus && externalStatuses.length) {
+          let closestDistance = Number.POSITIVE_INFINITY;
+          for (const status of externalStatuses) {
+            const distance = haversineDistanceKm([lon, lat], status.coordinates);
+            if (distance < maxStatusDistanceKm && distance < closestDistance) {
+              closestDistance = distance;
+              matchedStatus = status;
+            }
+          }
+        }
 
         return {
           id: `${el.type}/${el.id}`,
           name: toTitleCase(name),
           operator: tags.operator || tags.network,
-          address: address || city,
+          address: address || matchedStatus?.address || city,
           city,
           connectors: connectors.length ? connectors : undefined,
-          power: tags["charge:output"],
+          power: tags["charge:output"] || matchedStatus?.power,
           capacity: tags.capacity,
           access: tags.access,
           open24_7: opening?.includes("24/7"),
           openingHours: opening,
-          availability: "unknown",
+          availability: matchedStatus?.availability ?? "unknown",
+          statusLabel: matchedStatus?.statusLabel,
           coordinates: [lon, lat]
         } as ChargingStation;
       })
