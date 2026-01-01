@@ -109,6 +109,12 @@ const ChargingStationList = ({
                     24/7
                   </Badge>
                 )}
+                <Badge
+                  variant="outline"
+                  className={cn("text-[0.65rem] border", availabilityStyles(station.availability))}
+                >
+                  {availabilityLabel(station.availability)}
+                </Badge>
                 <ArrowRight
                   className={cn(
                     "w-4 h-4 text-muted-foreground transition-transform",
