@@ -75,12 +75,31 @@ function parseConnectors(tags: Record<string, string | undefined>) {
     .map(([, label]) => label);
 }
 
+// OCPP status mapping:
+// - Available -> available
+// - Occupied/Charging/Reserved/Finishing/Preparing/SuspendedEVSE/SuspendedEV -> occupied
+// - Faulted/Unavailable -> out_of_service
+const OCPP_STATUS_MAP: Record<string, ChargingStation["availability"]> = {
+  available: "available",
+  occupied: "occupied",
+  charging: "occupied",
+  reserved: "occupied",
+  finishing: "occupied",
+  preparing: "occupied",
+  suspendedevse: "occupied",
+  suspendedev: "occupied",
+  faulted: "out_of_service",
+  unavailable: "out_of_service"
+};
+
 function normalizeAvailability(value?: string | number | boolean) {
   if (value === undefined || value === null || value === "") return "unknown" as const;
   if (typeof value === "boolean") {
     return value ? ("available" as const) : ("out_of_service" as const);
   }
   const normalized = String(value).toLowerCase().trim();
+  const ocppAvailability = OCPP_STATUS_MAP[normalized];
+  if (ocppAvailability) return ocppAvailability;
   if (
     ["available", "free", "yes", "open", "in_service", "operational", "working"].includes(
       normalized
@@ -206,6 +225,8 @@ function deriveStatusFromProps(props: Record<string, any>) {
     props.statusLabel ??
     props.status_description ??
     props.status_desc ??
+    props.ocpp_status ??
+    props.ocppStatus ??
     props.charging_status ??
     props.connector_status ??
     props.state ??
@@ -251,6 +272,8 @@ function deriveStatusFromProps(props: Record<string, any>) {
         connector.availability ??
         connector.state ??
         connector.condition ??
+        connector.ocpp_status ??
+        connector.ocppStatus ??
         connector.is_available ??
         connector.isAvailable;
       if (connectorStatus !== undefined && connectorStatus !== null && connectorStatus !== "") {
