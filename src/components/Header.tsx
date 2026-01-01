@@ -1,5 +1,5 @@
 import { Button } from '@/components/ui/button';
-import { Bike, Menu, X, Download } from 'lucide-react';
+import { BatteryCharging, Menu, X, Download } from 'lucide-react';
 import { useState, useEffect } from 'react';
 
 interface BeforeInstallPromptEvent extends Event {
@@ -34,10 +34,10 @@ const Header = () => {
 
   const handleInstall = async () => {
     if (!deferredPrompt) return;
-    
+
     deferredPrompt.prompt();
     const { outcome } = await deferredPrompt.userChoice;
-    
+
     if (outcome === 'accepted') {
       setIsInstallable(false);
     }
@@ -53,17 +53,17 @@ const Header = () => {
       <div className="container flex items-center justify-between">
         <a href="/" className="flex items-center gap-2 group">
           <div className="p-2 rounded-xl bg-primary text-primary-foreground group-hover:shadow-glow transition-shadow">
-            <Bike className="w-5 h-5" />
+            <BatteryCharging className="w-5 h-5" />
           </div>
-          <span className="font-display font-bold text-lg">CyprusCycle</span>
+          <span className="font-display font-bold text-lg">ChargeCyprus</span>
         </a>
 
         <nav className="hidden md:flex items-center gap-6">
           <a href="#map" className="text-sm font-medium hover:text-primary transition-colors">
             Map
           </a>
-          <a href="#routes" className="text-sm font-medium hover:text-primary transition-colors">
-            Routes
+          <a href="#stations" className="text-sm font-medium hover:text-primary transition-colors">
+            Stations
           </a>
           <a href="#about" className="text-sm font-medium hover:text-primary transition-colors">
             About
@@ -91,8 +91,8 @@ const Header = () => {
             <a href="#map" className="text-sm font-medium hover:text-primary transition-colors py-2">
               Map
             </a>
-            <a href="#routes" className="text-sm font-medium hover:text-primary transition-colors py-2">
-              Routes
+            <a href="#stations" className="text-sm font-medium hover:text-primary transition-colors py-2">
+              Stations
             </a>
             <a href="#about" className="text-sm font-medium hover:text-primary transition-colors py-2">
               About
