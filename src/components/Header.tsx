@@ -74,36 +74,15 @@ const Header = () => {
           <a href="#about" className="text-sm font-medium hover:text-primary transition-colors">
             About
           </a>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={toggleTheme}
-            aria-label="Toggle theme"
-            title={resolvedTheme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
-            className="hidden md:inline-flex gap-2"
-          >
-            {resolvedTheme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
-            <span>{resolvedTheme === 'dark' ? 'Light mode' : 'Dark mode'}</span>
-          </Button>
+        </nav>
+
+        <div className="flex items-center gap-2">
           {isInstallable && (
             <Button variant="hero" size="sm" onClick={handleInstall}>
               <Download className="w-4 h-4" />
               Install App
             </Button>
           )}
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            onClick={toggleTheme}
-            aria-label="Toggle dark mode"
-          >
-            {resolvedTheme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
-          </Button>
-        </nav>
-
-        <div className="flex items-center gap-2">
           <Button
             type="button"
             variant="outline"
@@ -114,7 +93,7 @@ const Header = () => {
             className="gap-2"
           >
             {resolvedTheme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
-            <span className="hidden sm:inline md:hidden">
+            <span className="hidden sm:inline">
               {resolvedTheme === 'dark' ? 'Light mode' : 'Dark mode'}
             </span>
           </Button>
