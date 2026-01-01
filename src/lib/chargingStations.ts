@@ -12,6 +12,10 @@ const CYPRUS_STATUS_SOURCES = [
   "https://raw.githubusercontent.com/kotsiosla/cyprusevstations/main/charging-stations.json"
 ];
 
+const PLACETOPLUG_ENDPOINT =
+  import.meta.env.VITE_PLACETOPLUG_ENDPOINT ?? "https://placetoplug.com/api/chargepoints";
+const PLACETOPLUG_API_KEY = import.meta.env.VITE_PLACETOPLUG_API_KEY;
+
 const CYPRUS_STATUS_REPO = "https://api.github.com/repos/kotsiosla/cyprusevstations/contents";
 
 export interface ChargingStation {
@@ -349,6 +353,17 @@ function parseCsv(text: string) {
   });
 }
 
+function extractExternalItems(data: any): any[] {
+  if (Array.isArray(data)) return data;
+  if (Array.isArray(data?.stations)) return data.stations;
+  if (Array.isArray(data?.features)) return data.features;
+  if (Array.isArray(data?.results)) return data.results;
+  if (Array.isArray(data?.items)) return data.items;
+  if (Array.isArray(data?.data)) return data.data;
+  if (Array.isArray(data?.records)) return data.records;
+  return [];
+}
+
 function parseExternalStatusItem(item: any): ExternalStatus | null {
   if (!item || typeof item !== "object") return null;
 
@@ -408,6 +423,62 @@ function parseExternalStatusItem(item: any): ExternalStatus | null {
   };
 }
 
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function fetchWithRetries(
+  url: string,
+  options: RequestInit,
+  retries = 2,
+  backoffMs = 600
+) {
+  let lastError: unknown = null;
+  for (let attempt = 0; attempt <= retries; attempt += 1) {
+    try {
+      const res = await fetch(url, options);
+      if (res.status === 429 || res.status === 503) {
+        if (attempt < retries) {
+          await sleep(backoffMs * (attempt + 1));
+          continue;
+        }
+      }
+      if (!res.ok) return null;
+      return res;
+    } catch (error) {
+      lastError = error;
+      if (attempt < retries) {
+        await sleep(backoffMs * (attempt + 1));
+        continue;
+      }
+    }
+  }
+  if (lastError) {
+    console.warn("Failed to fetch external status data:", lastError);
+  }
+  return null;
+}
+
+async function fetchPlaceToPlugStatusData(): Promise<ExternalStatus[]> {
+  if (!PLACETOPLUG_ENDPOINT) return [];
+  const headers: Record<string, string> = { Accept: "application/json,text/plain" };
+  if (PLACETOPLUG_API_KEY) {
+    headers.Authorization = `Bearer ${PLACETOPLUG_API_KEY}`;
+    headers["x-api-key"] = PLACETOPLUG_API_KEY;
+  }
+
+  const res = await fetchWithRetries(PLACETOPLUG_ENDPOINT, { headers });
+  if (!res) return [];
+  const contentType = res.headers.get("content-type") || "";
+  const data = contentType.includes("text/csv") ? await res.text() : await res.json();
+  const items = typeof data === "string" ? parseCsv(data) : extractExternalItems(data);
+  if (!items.length) return [];
+
+  return items
+    .map(parseExternalStatusItem)
+    .filter((item): item is ExternalStatus => Boolean(item));
+}
+
 async function fetchGithubContents(path = "") {
   const url = path ? `${CYPRUS_STATUS_REPO}/${path}` : CYPRUS_STATUS_REPO;
   const res = await fetch(url, { headers: { Accept: "application/vnd.github+json" } });
@@ -439,6 +510,9 @@ async function discoverStatusFiles() {
 }
 
 async function fetchExternalStatusData(): Promise<ExternalStatus[]> {
+  const placeToPlug = await fetchPlaceToPlugStatusData();
+  if (placeToPlug.length) return placeToPlug;
+
   const candidateSources = [...CYPRUS_STATUS_SOURCES];
   try {
     const discovered = await discoverStatusFiles();
@@ -457,23 +531,8 @@ async function fetchExternalStatusData(): Promise<ExternalStatus[]> {
       if (!res.ok) continue;
       const contentType = res.headers.get("content-type") || "";
       const data = contentType.includes("text/csv") ? await res.text() : await res.json();
-      const items: any[] = Array.isArray(data)
-        ? data
-        : Array.isArray(data?.stations)
-        ? data.stations
-        : Array.isArray(data?.features)
-        ? data.features
-        : Array.isArray(data?.results)
-        ? data.results
-        : Array.isArray(data?.items)
-        ? data.items
-        : Array.isArray(data?.data)
-        ? data.data
-        : Array.isArray(data?.records)
-        ? data.records
-        : typeof data === "string"
-        ? parseCsv(data)
-        : [];
+      const items: any[] =
+        typeof data === "string" ? parseCsv(data) : extractExternalItems(data);
 
       if (!items.length) continue;
 
