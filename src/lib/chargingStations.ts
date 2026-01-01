@@ -15,6 +15,10 @@ export interface ChargingStation {
   capacity?: string;
   access?: string;
   open24_7?: boolean;
+  openingHours?: string;
+  availability?: "available" | "occupied" | "out_of_service" | "unknown";
+  distanceKm?: number;
+  distanceLabel?: string;
   coordinates: [number, number];
 }
 
@@ -60,6 +64,17 @@ function parseConnectors(tags: Record<string, string | undefined>) {
     .map(([, label]) => label);
 }
 
+function normalizeAvailability(value?: string) {
+  if (!value) return "unknown" as const;
+  const normalized = value.toLowerCase();
+  if (["available", "free", "yes", "open"].includes(normalized)) return "available" as const;
+  if (["occupied", "busy", "in_use"].includes(normalized)) return "occupied" as const;
+  if (["out_of_service", "out-of-service", "maintenance", "closed", "no"].includes(normalized)) {
+    return "out_of_service" as const;
+  }
+  return "unknown" as const;
+}
+
 async function fetchWithFailover(body: string) {
   let lastErr: any = null;
   for (const url of OVERPASS_MIRRORS) {
@@ -95,6 +110,9 @@ export async function fetchChargingStations(): Promise<ChargingStation[]> {
         const city = tags["addr:city"] || tags["addr:suburb"] || tags["addr:place"];
         const address = buildAddress(tags);
         const opening = tags.opening_hours;
+        const availability = normalizeAvailability(
+          tags["charging:status"] || tags["availability"] || tags["status"]
+        );
 
         return {
           id: `${el.type}/${el.id}`,
@@ -107,6 +125,8 @@ export async function fetchChargingStations(): Promise<ChargingStation[]> {
           capacity: tags.capacity,
           access: tags.access,
           open24_7: opening?.includes("24/7"),
+          openingHours: opening,
+          availability,
           coordinates: [lon, lat]
         } as ChargingStation;
       })
@@ -130,6 +150,8 @@ export const sampleChargingStations: ChargingStation[] = [
     power: "150 kW",
     capacity: "6",
     open24_7: true,
+    openingHours: "24/7",
+    availability: "available",
     coordinates: [33.3642, 35.1728]
   },
   {
@@ -142,6 +164,8 @@ export const sampleChargingStations: ChargingStation[] = [
     power: "120 kW",
     capacity: "4",
     open24_7: true,
+    openingHours: "24/7",
+    availability: "occupied",
     coordinates: [33.0186, 34.6751]
   },
   {
@@ -154,6 +178,8 @@ export const sampleChargingStations: ChargingStation[] = [
     power: "22 kW",
     capacity: "8",
     open24_7: false,
+    openingHours: "Mo-Su 07:00-22:00",
+    availability: "available",
     coordinates: [33.6376, 34.9167]
   },
   {
@@ -166,6 +192,8 @@ export const sampleChargingStations: ChargingStation[] = [
     power: "60 kW",
     capacity: "3",
     open24_7: false,
+    openingHours: "Mo-Su 08:00-20:00",
+    availability: "out_of_service",
     coordinates: [32.4162, 34.7721]
   },
   {
@@ -178,6 +206,8 @@ export const sampleChargingStations: ChargingStation[] = [
     power: "11 kW",
     capacity: "5",
     open24_7: true,
+    openingHours: "24/7",
+    availability: "available",
     coordinates: [33.9997, 34.9877]
   }
 ];
