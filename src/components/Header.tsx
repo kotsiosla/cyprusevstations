@@ -1,6 +1,7 @@
 import { Button } from '@/components/ui/button';
-import { BatteryCharging, Menu, X, Download } from 'lucide-react';
+import { BatteryCharging, Menu, X, Download, Moon, Sun } from 'lucide-react';
 import { useState, useEffect } from 'react';
+import { useTheme } from 'next-themes';
 
 interface BeforeInstallPromptEvent extends Event {
   prompt(): Promise<void>;
@@ -12,6 +13,11 @@ const Header = () => {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const [isInstallable, setIsInstallable] = useState(false);
+  const { resolvedTheme, setTheme } = useTheme();
+
+  const toggleTheme = () => {
+    setTheme(resolvedTheme === 'dark' ? 'light' : 'dark');
+  };
 
   useEffect(() => {
     const handleScroll = () => {
@@ -74,6 +80,15 @@ const Header = () => {
               Install App
             </Button>
           )}
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            onClick={toggleTheme}
+            aria-label="Toggle dark mode"
+          >
+            {resolvedTheme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+          </Button>
         </nav>
 
         <button
@@ -103,6 +118,16 @@ const Header = () => {
                 Install App
               </Button>
             )}
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={toggleTheme}
+              className="gap-2"
+            >
+              {resolvedTheme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+              {resolvedTheme === 'dark' ? 'Light mode' : 'Dark mode'}
+            </Button>
           </nav>
         </div>
       )}
