@@ -4,6 +4,14 @@ const OVERPASS_MIRRORS = [
   "https://overpass.nchc.org.tw/api/interpreter"
 ];
 
+const CYPRUS_STATUS_SOURCES = [
+  "https://raw.githubusercontent.com/kotsiosla/cyprusevstations/main/stations.json",
+  "https://raw.githubusercontent.com/kotsiosla/cyprusevstations/main/data/stations.json",
+  "https://raw.githubusercontent.com/kotsiosla/cyprusevstations/main/evstations.json",
+  "https://raw.githubusercontent.com/kotsiosla/cyprusevstations/main/data/evstations.json",
+  "https://raw.githubusercontent.com/kotsiosla/cyprusevstations/main/charging-stations.json"
+];
+
 export interface ChargingStation {
   id: string;
   name: string;
@@ -148,6 +156,94 @@ function deriveStatusLabel(tags: Record<string, string | undefined>) {
   return toTitleCase(candidates[0].replace(/[_-]+/g, " "));
 }
 
+function normalizeStatusLabel(value?: string) {
+  if (!value) return undefined;
+  return toTitleCase(value.replace(/[_-]+/g, " ").trim());
+}
+
+function coordinateKey(lon: number, lat: number, precision = 4) {
+  return `${lon.toFixed(precision)},${lat.toFixed(precision)}`;
+}
+
+type ExternalStatus = {
+  name?: string;
+  statusLabel?: string;
+  availability?: ChargingStation["availability"];
+  coordinates: [number, number];
+};
+
+function parseExternalStatusItem(item: any): ExternalStatus | null {
+  if (!item || typeof item !== "object") return null;
+
+  const props = item.properties ?? item;
+  const name = props.name || props.title || props.station || props.location;
+  const statusValue =
+    props.status ||
+    props.availability ||
+    props.operational_status ||
+    props.state ||
+    props.condition;
+
+  const lat =
+    props.lat ??
+    props.latitude ??
+    props.y ??
+    item.lat ??
+    item.latitude ??
+    item.y ??
+    item?.geometry?.coordinates?.[1];
+  const lon =
+    props.lon ??
+    props.lng ??
+    props.longitude ??
+    props.x ??
+    item.lon ??
+    item.lng ??
+    item.longitude ??
+    item.x ??
+    item?.geometry?.coordinates?.[0];
+
+  if (typeof lat !== "number" || typeof lon !== "number") return null;
+
+  const availability = normalizeAvailability(statusValue);
+  const statusLabel = normalizeStatusLabel(statusValue);
+
+  return {
+    name: name ? String(name) : undefined,
+    statusLabel,
+    availability,
+    coordinates: [lon, lat]
+  };
+}
+
+async function fetchExternalStatusData(): Promise<ExternalStatus[]> {
+  for (const url of CYPRUS_STATUS_SOURCES) {
+    try {
+      const res = await fetch(url, { headers: { Accept: "application/json" } });
+      if (!res.ok) continue;
+      const data = await res.json();
+      const items: any[] = Array.isArray(data)
+        ? data
+        : Array.isArray(data?.stations)
+        ? data.stations
+        : Array.isArray(data?.features)
+        ? data.features
+        : [];
+
+      if (!items.length) continue;
+
+      const parsed = items
+        .map(parseExternalStatusItem)
+        .filter((item): item is ExternalStatus => Boolean(item));
+
+      if (parsed.length) return parsed;
+    } catch {
+      continue;
+    }
+  }
+  return [];
+}
+
 async function fetchWithFailover(body: string) {
   let lastErr: any = null;
   for (const url of OVERPASS_MIRRORS) {
@@ -170,6 +266,16 @@ export async function fetchChargingStations(): Promise<ChargingStation[]> {
   try {
     const osm = await fetchWithFailover(cyprusChargingOverpassQuery());
     const elements = osm?.elements ?? [];
+    const externalStatuses = await fetchExternalStatusData();
+    const statusByCoord = new Map<string, ExternalStatus>();
+    const statusByName = new Map<string, ExternalStatus>();
+
+    externalStatuses.forEach((status) => {
+      statusByCoord.set(coordinateKey(status.coordinates[0], status.coordinates[1]), status);
+      if (status.name) {
+        statusByName.set(status.name.toLowerCase(), status);
+      }
+    });
 
     const stations: ChargingStation[] = elements
       .map((el: any) => {
@@ -185,6 +291,13 @@ export async function fetchChargingStations(): Promise<ChargingStation[]> {
         const opening = tags.opening_hours;
         const availability = deriveAvailability(tags);
         const statusLabel = deriveStatusLabel(tags);
+        const external =
+          statusByCoord.get(coordinateKey(lon, lat)) ||
+          statusByName.get(name.toLowerCase()) ||
+          statusByName.get(toTitleCase(name).toLowerCase());
+        const mergedAvailability =
+          availability !== "unknown" ? availability : external?.availability ?? availability;
+        const mergedStatusLabel = statusLabel || external?.statusLabel;
 
         return {
           id: `${el.type}/${el.id}`,
@@ -198,8 +311,8 @@ export async function fetchChargingStations(): Promise<ChargingStation[]> {
           access: tags.access,
           open24_7: opening?.includes("24/7"),
           openingHours: opening,
-          availability,
-          statusLabel,
+          availability: mergedAvailability,
+          statusLabel: mergedStatusLabel,
           coordinates: [lon, lat]
         } as ChargingStation;
       })
