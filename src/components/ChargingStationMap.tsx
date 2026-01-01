@@ -36,6 +36,7 @@ export default function ChargingStationMap({
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
   const markersRef = useRef<maplibregl.Marker[]>([]);
+  const markerByIdRef = useRef<Map<string, maplibregl.Marker>>(new Map());
 
   useEffect(() => {
     if (!mapContainerRef.current) return;
@@ -60,6 +61,7 @@ export default function ChargingStationMap({
 
     markersRef.current.forEach((marker) => marker.remove());
     markersRef.current = [];
+    markerByIdRef.current.clear();
 
     stations.forEach((station) => {
       const markerEl = document.createElement("button");
@@ -103,6 +105,7 @@ export default function ChargingStationMap({
         .addTo(map);
 
       markersRef.current.push(marker);
+      markerByIdRef.current.set(station.id, marker);
     });
     if (userLocation) {
       const userMarker = document.createElement("div");
@@ -119,6 +122,13 @@ export default function ChargingStationMap({
     if (!map || !selectedStation) return;
 
     map.flyTo({ center: selectedStation.coordinates, zoom: 12.5, speed: 1.2 });
+    const marker = markerByIdRef.current.get(selectedStation.id);
+    if (marker) {
+      const popup = marker.getPopup();
+      if (popup && !popup.isOpen()) {
+        marker.togglePopup();
+      }
+    }
   }, [selectedStation]);
 
   return <div ref={mapContainerRef} style={{ width: "100%", height: "100%" }} />;
