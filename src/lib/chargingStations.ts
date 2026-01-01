@@ -3,7 +3,6 @@ const OVERPASS_MIRRORS = [
   "https://overpass.kumi.systems/api/interpreter",
   "https://overpass.nchc.org.tw/api/interpreter"
 ];
-
 const CYPRUS_STATUS_SOURCES = [
   "https://raw.githubusercontent.com/kotsiosla/cyprusevstations/main/stations.json",
   "https://raw.githubusercontent.com/kotsiosla/cyprusevstations/main/data/stations.json",
