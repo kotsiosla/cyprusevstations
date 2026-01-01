@@ -12,6 +12,8 @@ const CYPRUS_STATUS_SOURCES = [
   "https://raw.githubusercontent.com/kotsiosla/cyprusevstations/main/charging-stations.json"
 ];
 
+const CYPRUS_STATUS_REPO = "https://api.github.com/repos/kotsiosla/cyprusevstations/contents";
+
 export interface ChargingStation {
   id: string;
   name: string;
@@ -172,6 +174,20 @@ type ExternalStatus = {
   coordinates: [number, number];
 };
 
+function parseCsv(text: string) {
+  const lines = text.split(/\r?\n/).filter((line) => line.trim());
+  if (lines.length < 2) return [];
+  const header = lines[0].split(",").map((cell) => cell.trim().toLowerCase());
+  return lines.slice(1).map((line) => {
+    const cells = line.split(",").map((cell) => cell.trim());
+    const row: Record<string, string> = {};
+    header.forEach((key, index) => {
+      row[key] = cells[index] ?? "";
+    });
+    return row;
+  });
+}
+
 function parseExternalStatusItem(item: any): ExternalStatus | null {
   if (!item || typeof item !== "object") return null;
 
@@ -216,18 +232,63 @@ function parseExternalStatusItem(item: any): ExternalStatus | null {
   };
 }
 
+async function fetchGithubContents(path = "") {
+  const url = path ? `${CYPRUS_STATUS_REPO}/${path}` : CYPRUS_STATUS_REPO;
+  const res = await fetch(url, { headers: { Accept: "application/vnd.github+json" } });
+  if (!res.ok) return [];
+  const data = await res.json();
+  return Array.isArray(data) ? data : [];
+}
+
+async function discoverStatusFiles() {
+  const entries = await fetchGithubContents();
+  const directories = entries
+    .filter((entry: any) => entry.type === "dir")
+    .map((entry: any) => entry.path)
+    .filter((path: string) => /data|dataset|geo|json/i.test(path));
+  const files = entries.filter((entry: any) => entry.type === "file");
+
+  const nestedFiles = await Promise.all(
+    directories.map((path: string) => fetchGithubContents(path))
+  );
+
+  return [...files, ...nestedFiles.flat()].filter((entry: any) => {
+    const name = String(entry.name || "").toLowerCase();
+    return (
+      entry.type === "file" &&
+      (name.endsWith(".json") || name.endsWith(".geojson") || name.endsWith(".csv")) &&
+      /station|charger|charging|ev/.test(name)
+    );
+  });
+}
+
 async function fetchExternalStatusData(): Promise<ExternalStatus[]> {
-  for (const url of CYPRUS_STATUS_SOURCES) {
+  const candidateSources = [...CYPRUS_STATUS_SOURCES];
+  try {
+    const discovered = await discoverStatusFiles();
+    discovered.forEach((entry: any) => {
+      if (entry.download_url) {
+        candidateSources.push(entry.download_url);
+      }
+    });
+  } catch {
+    // ignore discovery errors
+  }
+
+  for (const url of candidateSources) {
     try {
-      const res = await fetch(url, { headers: { Accept: "application/json" } });
+      const res = await fetch(url, { headers: { Accept: "application/json,text/plain" } });
       if (!res.ok) continue;
-      const data = await res.json();
+      const contentType = res.headers.get("content-type") || "";
+      const data = contentType.includes("text/csv") ? await res.text() : await res.json();
       const items: any[] = Array.isArray(data)
         ? data
         : Array.isArray(data?.stations)
         ? data.stations
         : Array.isArray(data?.features)
         ? data.features
+        : typeof data === "string"
+        ? parseCsv(data)
         : [];
 
       if (!items.length) continue;
