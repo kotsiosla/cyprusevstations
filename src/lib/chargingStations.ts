@@ -64,28 +64,74 @@ function parseConnectors(tags: Record<string, string | undefined>) {
     .map(([, label]) => label);
 }
 
-function normalizeAvailability(value?: string) {
-  if (!value) return "unknown" as const;
-  const normalized = value.toLowerCase();
-  if (["available", "free", "yes", "open", "in_service", "operational", "working"].includes(normalized)) {
+const OCPP_STATUS_MAP: Record<string, ChargingStation["availability"]> = {
+  available: "available",
+  occupied: "occupied",
+  charging: "occupied",
+  faulted: "out_of_service",
+  unavailable: "out_of_service",
+  reserved: "occupied",
+  preparing: "occupied",
+  finishing: "occupied",
+  suspendedev: "occupied",
+  suspendedevse: "occupied"
+};
+
+function normalizeAvailability(value?: string | number | boolean) {
+  if (value === undefined || value === null || value === "") return "unknown" as const;
+  if (typeof value === "boolean") {
+    return value ? ("available" as const) : ("out_of_service" as const);
+  }
+  const normalized = String(value).toLowerCase().trim().replace(/[\s_-]+/g, "");
+  if (normalized in OCPP_STATUS_MAP) {
+    return OCPP_STATUS_MAP[normalized];
+  }
+  if (
+    ["available", "free", "yes", "open", "in_service", "operational", "working"].includes(
+      normalized
+    ) ||
+    normalized.includes("available") ||
+    normalized.includes("operational") ||
+    normalized.includes("working")
+  ) {
     return "available" as const;
   }
-  if (["occupied", "busy", "in_use"].includes(normalized)) return "occupied" as const;
+  if (["1", "true"].includes(normalized)) return "available" as const;
+  if (
+    ["occupied", "busy", "in_use"].includes(normalized) ||
+    normalized.includes("occupied") ||
+    normalized.includes("busy")
+  ) {
+    return "occupied" as const;
+  }
+  if (["2", "inuse"].includes(normalized)) return "occupied" as const;
   if (
     ["out_of_service", "out-of-service", "maintenance", "closed", "no", "inactive", "fault"].includes(
       normalized
-    )
+    ) ||
+    normalized.includes("out of service") ||
+    normalized.includes("out-of-service") ||
+    normalized.includes("maintenance") ||
+    normalized.includes("fault") ||
+    normalized.includes("broken") ||
+    normalized.includes("fix")
   ) {
     return "out_of_service" as const;
   }
+  if (["0", "false", "offline", "down"].includes(normalized)) return "out_of_service" as const;
   return "unknown" as const;
 }
 
-function deriveAvailability(tags: Record<string, string | undefined>) {
+function findStatusCandidates(tags: Record<string, string | undefined>) {
   const candidates: string[] = [];
   const direct =
     tags["charging:status"] ||
     tags["charging_station:status"] ||
+    tags["status:charging_station"] ||
+    tags["charging_station:state"] ||
+    tags["state"] ||
+    tags["condition"] ||
+    tags["charging_station:condition"] ||
     tags["availability"] ||
     tags["operational_status"] ||
     tags["status"];
@@ -93,11 +139,21 @@ function deriveAvailability(tags: Record<string, string | undefined>) {
 
   Object.entries(tags).forEach(([key, value]) => {
     if (!value) return;
-    if (key.endsWith(":status") || key.endsWith(":availability")) {
+    if (
+      key.endsWith(":status") ||
+      key.endsWith(":availability") ||
+      key.endsWith(":state") ||
+      key.endsWith(":condition")
+    ) {
       candidates.push(value);
     }
   });
 
+  return candidates.map((value) => value.trim()).filter(Boolean);
+}
+
+function deriveAvailability(tags: Record<string, string | undefined>) {
+  const candidates = findStatusCandidates(tags);
   if (!candidates.length) return "unknown" as const;
 
   const normalized = candidates.map(normalizeAvailability);
@@ -142,7 +198,6 @@ export async function fetchChargingStations(): Promise<ChargingStation[]> {
         const city = tags["addr:city"] || tags["addr:suburb"] || tags["addr:place"];
         const address = buildAddress(tags);
         const opening = tags.opening_hours;
-        const availability = deriveAvailability(tags);
 
         return {
           id: `${el.type}/${el.id}`,
@@ -156,7 +211,7 @@ export async function fetchChargingStations(): Promise<ChargingStation[]> {
           access: tags.access,
           open24_7: opening?.includes("24/7"),
           openingHours: opening,
-          availability,
+          availability: "unknown",
           coordinates: [lon, lat]
         } as ChargingStation;
       })
