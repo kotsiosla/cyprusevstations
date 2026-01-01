@@ -75,21 +75,17 @@ function parseConnectors(tags: Record<string, string | undefined>) {
     .map(([, label]) => label);
 }
 
-// OCPP status mapping:
-// - Available -> available
-// - Occupied/Charging/Reserved/Finishing/Preparing/SuspendedEVSE/SuspendedEV -> occupied
-// - Faulted/Unavailable -> out_of_service
 const OCPP_STATUS_MAP: Record<string, ChargingStation["availability"]> = {
   available: "available",
   occupied: "occupied",
   charging: "occupied",
-  reserved: "occupied",
-  finishing: "occupied",
-  preparing: "occupied",
-  suspendedevse: "occupied",
-  suspendedev: "occupied",
   faulted: "out_of_service",
-  unavailable: "out_of_service"
+  unavailable: "out_of_service",
+  reserved: "occupied",
+  preparing: "occupied",
+  finishing: "occupied",
+  suspendedev: "occupied",
+  suspendedevse: "occupied"
 };
 
 function normalizeAvailability(value?: string | number | boolean) {
@@ -97,9 +93,10 @@ function normalizeAvailability(value?: string | number | boolean) {
   if (typeof value === "boolean") {
     return value ? ("available" as const) : ("out_of_service" as const);
   }
-  const normalized = String(value).toLowerCase().trim();
-  const ocppAvailability = OCPP_STATUS_MAP[normalized];
-  if (ocppAvailability) return ocppAvailability;
+  const normalized = String(value).toLowerCase().trim().replace(/[\s_-]+/g, "");
+  if (normalized in OCPP_STATUS_MAP) {
+    return OCPP_STATUS_MAP[normalized];
+  }
   if (
     ["available", "free", "yes", "open", "in_service", "operational", "working"].includes(
       normalized
@@ -535,26 +532,6 @@ export async function fetchChargingStations(): Promise<ChargingStation[]> {
         const city = tags["addr:city"] || tags["addr:suburb"] || tags["addr:place"];
         const address = buildAddress(tags);
         const opening = tags.opening_hours;
-        const availability = deriveAvailability(tags);
-        const statusLabel = deriveStatusLabel(tags);
-        const directExternal =
-          statusByCoord.get(coordinateKey(lon, lat)) ||
-          statusByName.get(name.toLowerCase()) ||
-          statusByName.get(toTitleCase(name).toLowerCase());
-        const nearestExternal =
-          directExternal ||
-          externalStatuses.reduce<ExternalStatus | null>((closest, status) => {
-            const distance = haversineDistanceKm([lon, lat], status.coordinates);
-            if (distance > maxStatusDistanceKm) return closest;
-            if (!closest) return status;
-            const currentDistance = haversineDistanceKm([lon, lat], closest.coordinates);
-            return distance < currentDistance ? status : closest;
-          }, null);
-        const mergedAvailability =
-          availability !== "unknown"
-            ? availability
-            : nearestExternal?.availability ?? availability;
-        const mergedStatusLabel = statusLabel || nearestExternal?.statusLabel;
 
         return {
           id: `${el.type}/${el.id}`,
@@ -568,8 +545,7 @@ export async function fetchChargingStations(): Promise<ChargingStation[]> {
           access: tags.access,
           open24_7: opening?.includes("24/7"),
           openingHours: opening,
-          availability: mergedAvailability,
-          statusLabel: mergedStatusLabel,
+          availability: "unknown",
           coordinates: [lon, lat]
         } as ChargingStation;
       })
