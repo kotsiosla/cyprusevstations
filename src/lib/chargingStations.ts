@@ -3,7 +3,6 @@ const OVERPASS_MIRRORS = [
   "https://overpass.kumi.systems/api/interpreter",
   "https://overpass.nchc.org.tw/api/interpreter"
 ];
-
 const CYPRUS_STATUS_SOURCES = [
   "https://fixcyprus.cy/gnosis/open/api/nap/datasets/electric_vehicle_chargers/",
   "https://raw.githubusercontent.com/kotsiosla/cyprusevstations/main/stations.json",
@@ -536,26 +535,6 @@ export async function fetchChargingStations(): Promise<ChargingStation[]> {
         const city = tags["addr:city"] || tags["addr:suburb"] || tags["addr:place"];
         const address = buildAddress(tags);
         const opening = tags.opening_hours;
-        const availability = deriveAvailability(tags);
-        const statusLabel = deriveStatusLabel(tags);
-        const directExternal =
-          statusByCoord.get(coordinateKey(lon, lat)) ||
-          statusByName.get(name.toLowerCase()) ||
-          statusByName.get(toTitleCase(name).toLowerCase());
-        const nearestExternal =
-          directExternal ||
-          externalStatuses.reduce<ExternalStatus | null>((closest, status) => {
-            const distance = haversineDistanceKm([lon, lat], status.coordinates);
-            if (distance > maxStatusDistanceKm) return closest;
-            if (!closest) return status;
-            const currentDistance = haversineDistanceKm([lon, lat], closest.coordinates);
-            return distance < currentDistance ? status : closest;
-          }, null);
-        const mergedAvailability =
-          availability !== "unknown"
-            ? availability
-            : nearestExternal?.availability ?? availability;
-        const mergedStatusLabel = statusLabel || nearestExternal?.statusLabel;
 
         return {
           id: `${el.type}/${el.id}`,
@@ -569,8 +548,7 @@ export async function fetchChargingStations(): Promise<ChargingStation[]> {
           access: tags.access,
           open24_7: opening?.includes("24/7"),
           openingHours: opening,
-          availability: mergedAvailability,
-          statusLabel: mergedStatusLabel,
+          availability: "unknown",
           coordinates: [lon, lat]
         } as ChargingStation;
       })
