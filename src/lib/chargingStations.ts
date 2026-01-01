@@ -6,6 +6,16 @@ const OVERPASS_MIRRORS = [
 const CYPRUS_STATUS_SOURCES = [
   "https://traffic4cyprus.org.cy/dataset/electricvehiclecharges/resource/471c1040-cda9-47b8-9b47-2a9065aeddba/download"
 ];
+const PLACETOPLUG_STATUS_SOURCES = [
+  "https://placetoplug.com/api/charging-stations.geojson",
+  "https://placetoplug.com/api/charging-stations"
+];
+const PLACETOPLUG_API_KEY =
+  typeof import.meta !== "undefined" ? (import.meta as any).env?.VITE_PLACETOPLUG_API_KEY : undefined;
+const PLACETOPLUG_API_TOKEN =
+  typeof import.meta !== "undefined"
+    ? (import.meta as any).env?.VITE_PLACETOPLUG_API_TOKEN
+    : undefined;
 
 const PLACETOPLUG_ENDPOINT =
   import.meta.env.VITE_PLACETOPLUG_ENDPOINT ?? "https://placetoplug.com/api/chargepoints";
