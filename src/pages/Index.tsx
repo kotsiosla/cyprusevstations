@@ -6,11 +6,12 @@ import ChargingStationMap from '@/components/ChargingStationMap';
 import ChargingStationList from '@/components/ChargingStationList';
 import { fetchChargingStations, sampleChargingStations, ChargingStation } from '@/lib/chargingStations';
 import { Helmet } from 'react-helmet-async';
-import { BatteryCharging, Heart, MapPin, Navigation } from 'lucide-react';
+import { BatteryCharging, Heart, MapPin, Moon, Navigation, Sun } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { useTheme } from 'next-themes';
 
 const Index = () => {
   const [stations, setStations] = useState<ChargingStation[]>(sampleChargingStations);
@@ -25,6 +26,11 @@ const Index = () => {
   const [availabilityFilter, setAvailabilityFilter] = useState('all');
   const [openNowOnly, setOpenNowOnly] = useState(false);
   const [fastOnly, setFastOnly] = useState(false);
+  const { resolvedTheme, setTheme } = useTheme();
+
+  const toggleTheme = () => {
+    setTheme(resolvedTheme === 'dark' ? 'light' : 'dark');
+  };
 
   useEffect(() => {
     const loadStations = async () => {
@@ -267,6 +273,24 @@ const Index = () => {
                     ? 'Loading stations...'
                     : `${filteredStations.length} charging stations available across Cyprus`}
                 </p>
+                <div className="mt-6 flex justify-center">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={toggleTheme}
+                    aria-label="Toggle theme"
+                    title={resolvedTheme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+                    className="gap-2"
+                  >
+                    {resolvedTheme === 'dark' ? (
+                      <Sun className="w-4 h-4" />
+                    ) : (
+                      <Moon className="w-4 h-4" />
+                    )}
+                    <span>{resolvedTheme === 'dark' ? 'Light mode' : 'Dark mode'}</span>
+                  </Button>
+                </div>
               </div>
 
               <div className="mb-8 grid gap-4 rounded-xl border bg-background p-4 shadow-soft md:grid-cols-2 lg:grid-cols-4">
