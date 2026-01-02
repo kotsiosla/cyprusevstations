@@ -215,14 +215,42 @@ export default function ChargingStationMap({
       });
     });
 
-    mapRef.current = map;
+      map.addSource("stations", {
+        type: "geojson",
+        data: stationGeoJson,
+        cluster: true,
+        clusterMaxZoom: 13,
+        clusterRadius: 50
+      });
 
-    return () => map.remove();
-  }, []);
-
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map) return;
+      map.addLayer({
+        id: "clusters",
+        type: "circle",
+        source: "stations",
+        filter: ["has", "point_count"],
+        paint: {
+          "circle-color": [
+            "step",
+            ["get", "point_count"],
+            "#60a5fa",
+            20,
+            "#2563eb",
+            50,
+            "#1e3a8a"
+          ],
+          "circle-radius": [
+            "step",
+            ["get", "point_count"],
+            18,
+            20,
+            24,
+            50,
+            30
+          ],
+          "circle-stroke-width": 2,
+          "circle-stroke-color": "#0f172a"
+        }
+      });
 
     const source = map.getSource("stations") as maplibregl.GeoJSONSource | undefined;
     if (source) {
@@ -301,6 +329,34 @@ export default function ChargingStationMap({
       popupRef.current = null;
     }
   }, [selectedStation, showStations]);
+
+  const handleZoomIn = () => {
+    mapRef.current?.zoomIn();
+  };
+
+  const handleZoomOut = () => {
+    mapRef.current?.zoomOut();
+  };
+
+  const handleResetView = () => {
+    mapRef.current?.flyTo({ center: defaultView.center, zoom: defaultView.zoom, speed: 1.2 });
+  };
+
+  const handleLocate = () => {
+    if (userLocation) {
+      mapRef.current?.flyTo({ center: userLocation, zoom: 12.5, speed: 1.2 });
+      return;
+    }
+    if (onRequestLocation) {
+      onRequestLocation();
+      return;
+    }
+    if (!navigator.geolocation) return;
+    navigator.geolocation.getCurrentPosition((position) => {
+      const coords: [number, number] = [position.coords.longitude, position.coords.latitude];
+      mapRef.current?.flyTo({ center: coords, zoom: 12.5, speed: 1.2 });
+    });
+  };
 
   const handleZoomIn = () => {
     mapRef.current?.zoomIn();
