@@ -70,40 +70,8 @@ export default function ChargingStationMap({
   }, [stations]);
   const stationGeoJsonRef = useRef(stationGeoJson);
 
-  useEffect(() => {
-    stationsRef.current = stations;
-  }, [stations]);
-
-  useEffect(() => {
-    stationGeoJsonRef.current = stationGeoJson;
-  }, [stationGeoJson]);
-
-  useEffect(() => {
-    if (!mapContainerRef.current) return;
-    if (mapRef.current) return;
-
-    const map = new maplibregl.Map({
-      container: mapContainerRef.current,
-      style: mapStyle,
-      center: defaultView.center,
-      zoom: defaultView.zoom
-    });
-
-    map.on("load", () => {
-      const existingSource = map.getSource("stations") as maplibregl.GeoJSONSource | undefined;
-      if (existingSource) {
-        existingSource.setData(stationGeoJsonRef.current);
-        return;
-      }
-
-      map.addSource("stations", {
-        type: "geojson",
-        data: stationGeoJsonRef.current,
-        cluster: true,
-        clusterMaxZoom: 13,
-        clusterRadius: 50
-      });
-
+  const ensureStationLayers = (map: maplibregl.Map) => {
+    if (!map.getLayer("clusters")) {
       map.addLayer({
         id: "clusters",
         type: "circle",
@@ -132,7 +100,9 @@ export default function ChargingStationMap({
           "circle-stroke-color": "#0f172a"
         }
       });
+    }
 
+    if (!map.getLayer("cluster-count")) {
       map.addLayer({
         id: "cluster-count",
         type: "symbol",
@@ -147,7 +117,9 @@ export default function ChargingStationMap({
           "text-color": "#f8fafc"
         }
       });
+    }
 
+    if (!map.getLayer("unclustered-point")) {
       map.addLayer({
         id: "unclustered-point",
         type: "circle",
@@ -170,7 +142,9 @@ export default function ChargingStationMap({
           "circle-stroke-color": "#0f172a"
         }
       });
+    }
 
+    if (!map.getLayer("selected-station")) {
       map.addLayer({
         id: "selected-station",
         type: "circle",
@@ -183,6 +157,45 @@ export default function ChargingStationMap({
           "circle-stroke-color": "#f8fafc"
         }
       });
+    }
+  };
+
+  useEffect(() => {
+    stationsRef.current = stations;
+  }, [stations]);
+
+  useEffect(() => {
+    stationGeoJsonRef.current = stationGeoJson;
+  }, [stationGeoJson]);
+
+  useEffect(() => {
+    if (!mapContainerRef.current) return;
+    if (mapRef.current) return;
+
+    const map = new maplibregl.Map({
+      container: mapContainerRef.current,
+      style: mapStyle,
+      center: defaultView.center,
+      zoom: defaultView.zoom
+    });
+
+    map.on("load", () => {
+      const existingSource = map.getSource("stations") as maplibregl.GeoJSONSource | undefined;
+      if (existingSource) {
+        existingSource.setData(stationGeoJsonRef.current);
+        ensureStationLayers(map);
+        return;
+      }
+
+      map.addSource("stations", {
+        type: "geojson",
+        data: stationGeoJsonRef.current,
+        cluster: true,
+        clusterMaxZoom: 13,
+        clusterRadius: 50
+      });
+
+      ensureStationLayers(map);
 
       map.on("click", "clusters", (event) => {
         const features = map.queryRenderedFeatures(event.point, {
