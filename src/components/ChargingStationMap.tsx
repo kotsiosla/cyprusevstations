@@ -13,18 +13,16 @@ interface ChargingStationMapProps {
 const mapStyle = {
   version: 8 as const,
   sources: {
-    osm: {
+    esri: {
       type: "raster" as const,
       tiles: [
-        "https://a.tile.openstreetmap.org/{z}/{x}/{y}.png",
-        "https://b.tile.openstreetmap.org/{z}/{x}/{y}.png",
-        "https://c.tile.openstreetmap.org/{z}/{x}/{y}.png"
+        "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
       ],
       tileSize: 256,
-      attribution: "© OpenStreetMap contributors"
+      attribution: "Tiles © Esri — Source: Esri, Maxar, Earthstar Geographics, and the GIS User Community"
     }
   },
-  layers: [{ id: "osm", type: "raster" as const, source: "osm" }]
+  layers: [{ id: "esri-satellite", type: "raster" as const, source: "esri" }]
 };
 
 export default function ChargingStationMap({
