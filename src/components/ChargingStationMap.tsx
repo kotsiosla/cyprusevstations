@@ -286,7 +286,7 @@ export default function ChargingStationMap({
 
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !selectedStation) return;
+    if (!map || !selectedStation || !showStations) return;
 
     map.flyTo({ center: selectedStation.coordinates, zoom: 12.5, speed: 1.2 });
     if (map.getLayer("selected-station")) {
@@ -316,19 +316,47 @@ export default function ChargingStationMap({
             : "")
       )
       .addTo(map);
-  }, [selectedStation]);
+  }, [selectedStation, showStations]);
 
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
-    if (!selectedStation) {
+    if (!selectedStation || !showStations) {
       if (map.getLayer("selected-station")) {
         map.setFilter("selected-station", ["==", ["get", "id"], ""]);
       }
       popupRef.current?.remove();
       popupRef.current = null;
     }
-  }, [selectedStation]);
+  }, [selectedStation, showStations]);
+
+  const handleZoomIn = () => {
+    mapRef.current?.zoomIn();
+  };
+
+  const handleZoomOut = () => {
+    mapRef.current?.zoomOut();
+  };
+
+  const handleResetView = () => {
+    mapRef.current?.flyTo({ center: defaultView.center, zoom: defaultView.zoom, speed: 1.2 });
+  };
+
+  const handleLocate = () => {
+    if (userLocation) {
+      mapRef.current?.flyTo({ center: userLocation, zoom: 12.5, speed: 1.2 });
+      return;
+    }
+    if (onRequestLocation) {
+      onRequestLocation();
+      return;
+    }
+    if (!navigator.geolocation) return;
+    navigator.geolocation.getCurrentPosition((position) => {
+      const coords: [number, number] = [position.coords.longitude, position.coords.latitude];
+      mapRef.current?.flyTo({ center: coords, zoom: 12.5, speed: 1.2 });
+    });
+  };
 
   const handleZoomIn = () => {
     mapRef.current?.zoomIn();
