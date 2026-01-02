@@ -122,7 +122,7 @@ function normalizeAvailability(value?: string | number | boolean) {
   }
   if (["2", "inuse"].includes(normalized)) return "occupied" as const;
   if (
-    ["out_of_service", "out-of-service", "maintenance", "closed", "no", "inactive", "fault"].includes(
+    ["out_of_service", "out-of-service", "maintenance", "closed", "no", "inactive", "fault", "unavailable"].includes(
       normalized
     ) ||
     normalized.includes("out of service") ||
@@ -130,7 +130,8 @@ function normalizeAvailability(value?: string | number | boolean) {
     normalized.includes("maintenance") ||
     normalized.includes("fault") ||
     normalized.includes("broken") ||
-    normalized.includes("fix")
+    normalized.includes("fix") ||
+    normalized.includes("unavailable")
   ) {
     return "out_of_service" as const;
   }
@@ -449,14 +450,64 @@ function parseXmlStations(xmlText: string): ExternalStatus[] {
   const parserError = doc.getElementsByTagName("parsererror");
   if (parserError.length) return [];
 
-  const elements = Array.from(doc.getElementsByTagName("*"));
   const stations: ExternalStatus[] = [];
+
+  // Helper to get text from nested element
+  const getDeepText = (el: Element, tagName: string): string | undefined => {
+    const found = el.getElementsByTagName(tagName)[0] || 
+                  el.getElementsByTagName(`ei:${tagName}`)[0];
+    return found?.textContent?.trim() || undefined;
+  };
+
+  // Helper to get value from status element (handles <value>text</value> structure)
+  const getValueText = (el: Element, tagName: string): string | undefined => {
+    const container = el.getElementsByTagName(tagName)[0] || 
+                      el.getElementsByTagName(`ei:${tagName}`)[0];
+    if (!container) return undefined;
+    const valueEl = container.getElementsByTagName("value")[0];
+    return valueEl?.textContent?.trim() || container.textContent?.trim() || undefined;
+  };
+
+  // Try DATEX II format (Cyprus EMS API)
+  const chargingPoints = doc.getElementsByTagName("ei:chargingPoint");
+  if (chargingPoints.length > 0) {
+    Array.from(chargingPoints).forEach((cp) => {
+      const latEl = cp.getElementsByTagName("latitude")[0];
+      const lonEl = cp.getElementsByTagName("longitude")[0];
+      if (!latEl || !lonEl) return;
+
+      const lat = Number(latEl.textContent?.trim());
+      const lon = Number(lonEl.textContent?.trim());
+      if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
+
+      const name = getDeepText(cp, "chargingPointIdentification");
+      const address = getValueText(cp, "chargingPointAddress");
+      const statusValue = getValueText(cp, "chargingPointStatus");
+      const power = getDeepText(cp, "maximumPower") || getDeepText(cp, "connectorPower");
+
+      const availability = normalizeAvailability(statusValue);
+      const statusLabel = normalizeStatusLabel(statusValue);
+
+      stations.push({
+        name: name ?? undefined,
+        address: address ?? undefined,
+        power: power ? `${power} kW` : undefined,
+        availability,
+        statusLabel,
+        coordinates: [lon, lat]
+      });
+    });
+    return stations;
+  }
+
+  // Fallback: generic XML parsing
+  const elements = Array.from(doc.getElementsByTagName("*"));
 
   const getChildText = (el: Element, tags: string[]) => {
     const lowerTags = tags.map((tag) => tag.toLowerCase());
     const children = Array.from(el.children);
     for (const child of children) {
-      const tagName = child.tagName.toLowerCase();
+      const tagName = child.tagName.toLowerCase().replace(/^.*:/, "");
       if (lowerTags.includes(tagName)) {
         const text = child.textContent?.trim();
         if (text) return text;
@@ -467,9 +518,10 @@ function parseXmlStations(xmlText: string): ExternalStatus[] {
 
   const latTags = ["lat", "latitude", "y"];
   const lonTags = ["lon", "lng", "longitude", "x"];
-  const nameTags = ["name", "station", "station_name", "title"];
-  const addressTags = ["address", "location", "location_description", "street", "site"];
-  const powerTags = ["power", "power_kw", "output", "charger_type", "type"];
+  const nameTags = ["name", "station", "station_name", "title", "chargingpointidentification"];
+  const addressTags = ["address", "location", "location_description", "street", "site", "chargingpointaddress"];
+  const powerTags = ["power", "power_kw", "output", "maximumpower", "connectorpower"];
+  const statusTags = ["status", "chargingpointstatus", "availability", "state"];
 
   elements.forEach((el) => {
     const latText = getChildText(el, latTags);
@@ -482,12 +534,17 @@ function parseXmlStations(xmlText: string): ExternalStatus[] {
     const name = getChildText(el, nameTags);
     const address = getChildText(el, addressTags);
     const power = getChildText(el, powerTags);
+    const statusValue = getChildText(el, statusTags);
+
+    const availability = normalizeAvailability(statusValue);
+    const statusLabel = normalizeStatusLabel(statusValue);
 
     stations.push({
       name: name ?? undefined,
       address: address ?? undefined,
-      power: power ?? undefined,
-      availability: "unknown",
+      power: power ? (power.includes("kW") ? power : `${power} kW`) : undefined,
+      availability,
+      statusLabel,
       coordinates: [lon, lat]
     });
   });
@@ -564,24 +621,34 @@ async function fetchExternalStatusData(): Promise<ExternalStatus[]> {
       });
       if (!res.ok) continue;
       const contentType = res.headers.get("content-type") || "";
-      if (contentType.includes("xml") || contentType.includes("text/plain")) {
-        const xmlText = await res.text();
-        const parsed = parseXmlStations(xmlText);
-        if (parsed.length) return parsed;
-        continue;
+      const textContent = await res.text();
+      
+      // Try XML parsing first if content looks like XML
+      if (contentType.includes("xml") || textContent.trim().startsWith("<?xml") || textContent.trim().startsWith("<")) {
+        const parsed = parseXmlStations(textContent);
+        if (parsed.length) {
+          console.log(`Loaded ${parsed.length} stations with status from Cyprus EMS API`);
+          return parsed;
+        }
       }
 
-      const data = contentType.includes("text/csv") ? await res.text() : await res.json();
-      const items: any[] =
-        typeof data === "string" ? parseCsv(data) : extractExternalItems(data);
+      // Try JSON/CSV parsing
+      try {
+        const data = contentType.includes("text/csv") ? textContent : JSON.parse(textContent);
+        const items: any[] =
+          typeof data === "string" ? parseCsv(data) : extractExternalItems(data);
 
-      if (!items.length) continue;
+        if (!items.length) continue;
 
-      const parsed = items
-        .map(parseExternalStatusItem)
-        .filter((item): item is ExternalStatus => Boolean(item));
+        const parsed = items
+          .map(parseExternalStatusItem)
+          .filter((item): item is ExternalStatus => Boolean(item));
 
-      if (parsed.length) return parsed;
+        if (parsed.length) return parsed;
+      } catch {
+        // JSON parse failed, continue to next source
+        continue;
+      }
     } catch {
       continue;
     }
@@ -614,6 +681,7 @@ export async function fetchChargingStations(): Promise<ChargingStation[]> {
     const externalStatuses = await fetchExternalStatusData();
     const statusByCoord = new Map<string, ExternalStatus>();
     const statusByName = new Map<string, ExternalStatus>();
+    const usedExternalIds = new Set<string>();
 
     externalStatuses.forEach((status) => {
       statusByCoord.set(coordinateKey(status.coordinates[0], status.coordinates[1]), status);
@@ -621,7 +689,9 @@ export async function fetchChargingStations(): Promise<ChargingStation[]> {
         statusByName.set(status.name.toLowerCase(), status);
       }
     });
-    const maxStatusDistanceKm = 0.2;
+    
+    // Increase matching distance to 500m for better matching
+    const maxStatusDistanceKm = 0.5;
 
     const stations: ChargingStation[] = elements
       .map((el: any) => {
@@ -639,6 +709,7 @@ export async function fetchChargingStations(): Promise<ChargingStation[]> {
         const nameKey = name?.toLowerCase();
         let matchedStatus =
           statusByCoord.get(coordKey) || (nameKey ? statusByName.get(nameKey) : undefined);
+        
         if (!matchedStatus && externalStatuses.length) {
           let closestDistance = Number.POSITIVE_INFINITY;
           for (const status of externalStatuses) {
@@ -648,6 +719,10 @@ export async function fetchChargingStations(): Promise<ChargingStation[]> {
               matchedStatus = status;
             }
           }
+        }
+
+        if (matchedStatus) {
+          usedExternalIds.add(coordinateKey(matchedStatus.coordinates[0], matchedStatus.coordinates[1]));
         }
 
         return {
@@ -668,6 +743,28 @@ export async function fetchChargingStations(): Promise<ChargingStation[]> {
         } as ChargingStation;
       })
       .filter(Boolean);
+
+    // Add external stations that weren't matched to any OSM station
+    let addedFromExternal = 0;
+    externalStatuses.forEach((status, index) => {
+      const coordKey = coordinateKey(status.coordinates[0], status.coordinates[1]);
+      if (!usedExternalIds.has(coordKey)) {
+        stations.push({
+          id: `external/${index}`,
+          name: status.name ? toTitleCase(status.name) : "Charging Station",
+          address: status.address,
+          power: status.power,
+          availability: status.availability ?? "unknown",
+          statusLabel: status.statusLabel,
+          coordinates: status.coordinates
+        });
+        addedFromExternal++;
+      }
+    });
+
+    if (addedFromExternal > 0) {
+      console.log(`Added ${addedFromExternal} stations from external API with live status`);
+    }
 
     return stations;
   } catch (error) {
