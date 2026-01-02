@@ -75,6 +75,7 @@ export default function ChargingStationMap({
 
   useEffect(() => {
     if (!mapContainerRef.current) return;
+    if (mapRef.current) return;
 
     const map = new maplibregl.Map({
       container: mapContainerRef.current,
@@ -221,7 +222,10 @@ export default function ChargingStationMap({
 
     mapRef.current = map;
 
-    return () => map.remove();
+    return () => {
+      map.remove();
+      mapRef.current = null;
+    };
   }, []);
 
   useEffect(() => {
