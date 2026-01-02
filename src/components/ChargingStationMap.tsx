@@ -46,6 +46,7 @@ export default function ChargingStationMap({
   const stationsRef = useRef<ChargingStation[]>(stations);
   const onStationSelectRef = useRef(onStationSelect);
   const [showStations, setShowStations] = useState(true);
+  const interactionsReadyRef = useRef(false);
 
   const stationGeoJson = useMemo(() => {
     return {
@@ -161,6 +162,52 @@ export default function ChargingStationMap({
     }
   };
 
+  const ensureStationInteractions = (map: maplibregl.Map) => {
+    if (interactionsReadyRef.current) return;
+
+    map.on("click", "clusters", (event) => {
+      const features = map.queryRenderedFeatures(event.point, {
+        layers: ["clusters"]
+      });
+      const clusterId = features[0]?.properties?.cluster_id;
+      const source = map.getSource("stations") as maplibregl.GeoJSONSource;
+      if (!source || clusterId === undefined) return;
+      source.getClusterExpansionZoom(clusterId, (error, zoom) => {
+        if (error) return;
+        const [longitude, latitude] = (features[0].geometry as GeoJSON.Point)
+          .coordinates as [number, number];
+        map.easeTo({ center: [longitude, latitude], zoom });
+      });
+    });
+
+    map.on("click", "unclustered-point", (event) => {
+      const feature = event.features?.[0];
+      if (!feature) return;
+      const properties = feature.properties ?? {};
+      const stationId = String(properties.id ?? "");
+      const station = stationsRef.current.find((item) => item.id === stationId);
+      if (station) {
+        onStationSelectRef.current?.(station);
+      }
+    });
+
+    map.on("mouseenter", "clusters", () => {
+      map.getCanvas().style.cursor = "pointer";
+    });
+    map.on("mouseleave", "clusters", () => {
+      map.getCanvas().style.cursor = "";
+    });
+
+    map.on("mouseenter", "unclustered-point", () => {
+      map.getCanvas().style.cursor = "pointer";
+    });
+    map.on("mouseleave", "unclustered-point", () => {
+      map.getCanvas().style.cursor = "";
+    });
+
+    interactionsReadyRef.current = true;
+  };
+
   useEffect(() => {
     stationsRef.current = stations;
   }, [stations]);
@@ -189,6 +236,7 @@ export default function ChargingStationMap({
       if (existingSource) {
         existingSource.setData(stationGeoJsonRef.current);
         ensureStationLayers(map);
+        ensureStationInteractions(map);
         return;
       }
 
@@ -201,51 +249,13 @@ export default function ChargingStationMap({
       });
 
       ensureStationLayers(map);
-
-      map.on("click", "clusters", (event) => {
-        const features = map.queryRenderedFeatures(event.point, {
-          layers: ["clusters"]
-        });
-        const clusterId = features[0]?.properties?.cluster_id;
-        const source = map.getSource("stations") as maplibregl.GeoJSONSource;
-        if (!source || clusterId === undefined) return;
-        source.getClusterExpansionZoom(clusterId, (error, zoom) => {
-          if (error) return;
-          const [longitude, latitude] = (features[0].geometry as GeoJSON.Point)
-            .coordinates as [number, number];
-          map.easeTo({ center: [longitude, latitude], zoom });
-        });
-      });
-
-      map.on("click", "unclustered-point", (event) => {
-        const feature = event.features?.[0];
-        if (!feature) return;
-        const properties = feature.properties ?? {};
-        const stationId = String(properties.id ?? "");
-        const station = stationsRef.current.find((item) => item.id === stationId);
-        if (station) {
-          onStationSelectRef.current?.(station);
-        }
-      });
-
-      map.on("mouseenter", "clusters", () => {
-        map.getCanvas().style.cursor = "pointer";
-      });
-      map.on("mouseleave", "clusters", () => {
-        map.getCanvas().style.cursor = "";
-      });
-
-      map.on("mouseenter", "unclustered-point", () => {
-        map.getCanvas().style.cursor = "pointer";
-      });
-      map.on("mouseleave", "unclustered-point", () => {
-        map.getCanvas().style.cursor = "";
-      });
+      ensureStationInteractions(map);
     });
 
     mapRef.current = map;
 
     return () => {
+      interactionsReadyRef.current = false;
       map.remove();
       mapRef.current = null;
     };
