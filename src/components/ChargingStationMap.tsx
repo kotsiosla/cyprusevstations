@@ -32,6 +32,8 @@ const mapStyle = {
   layers: [{ id: "esri-satellite", type: "raster" as const, source: "esri" }]
 };
 
+const stationLayerIds = ["clusters", "cluster-count", "unclustered-point", "selected-station"] as const;
+
 export default function ChargingStationMap({
   stations,
   selectedStation,
@@ -256,6 +258,12 @@ export default function ChargingStationMap({
 
     return () => {
       interactionsReadyRef.current = false;
+      popupRef.current?.remove();
+      popupRef.current = null;
+      if (userMarkerRef.current) {
+        userMarkerRef.current.remove();
+        userMarkerRef.current = null;
+      }
       map.remove();
       mapRef.current = null;
     };
@@ -290,7 +298,7 @@ export default function ChargingStationMap({
     const map = mapRef.current;
     if (!map) return;
     const visibility = showStations ? "visible" : "none";
-    ["clusters", "cluster-count", "unclustered-point", "selected-station"].forEach((layerId) => {
+    stationLayerIds.forEach((layerId) => {
       if (map.getLayer(layerId)) {
         map.setLayoutProperty(layerId, "visibility", visibility);
       }
