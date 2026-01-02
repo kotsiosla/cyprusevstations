@@ -44,7 +44,6 @@ export default function ChargingStationMap({
   const popupRef = useRef<maplibregl.Popup | null>(null);
   const userMarkerRef = useRef<maplibregl.Marker | null>(null);
   const stationsRef = useRef<ChargingStation[]>(stations);
-  const stationGeoJsonRef = useRef(stationGeoJson);
   const [showStations, setShowStations] = useState(true);
 
   const stationGeoJson = useMemo(() => {
@@ -69,6 +68,7 @@ export default function ChargingStationMap({
         }))
     };
   }, [stations]);
+  const stationGeoJsonRef = useRef(stationGeoJson);
 
   useEffect(() => {
     stationsRef.current = stations;
