@@ -11,10 +11,10 @@ interface ChargingStationMapProps {
 }
 
 const mapStyle = {
-  version: 8,
+  version: 8 as const,
   sources: {
     osm: {
-      type: "raster",
+      type: "raster" as const,
       tiles: [
         "https://a.tile.openstreetmap.org/{z}/{x}/{y}.png",
         "https://b.tile.openstreetmap.org/{z}/{x}/{y}.png",
@@ -24,7 +24,7 @@ const mapStyle = {
       attribution: "© OpenStreetMap contributors"
     }
   },
-  layers: [{ id: "osm", type: "raster", source: "osm" }]
+  layers: [{ id: "osm", type: "raster" as const, source: "osm" }]
 };
 
 export default function ChargingStationMap({
