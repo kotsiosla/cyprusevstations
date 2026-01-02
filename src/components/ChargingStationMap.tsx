@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { ChargingStation } from "@/lib/chargingStations";
@@ -33,8 +33,36 @@ export default function ChargingStationMap({
 }: ChargingStationMapProps) {
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
-  const markersRef = useRef<maplibregl.Marker[]>([]);
-  const markerByIdRef = useRef<Map<string, maplibregl.Marker>>(new Map());
+  const popupRef = useRef<maplibregl.Popup | null>(null);
+  const userMarkerRef = useRef<maplibregl.Marker | null>(null);
+  const stationsRef = useRef<ChargingStation[]>(stations);
+
+  const stationGeoJson = useMemo(() => {
+    return {
+      type: "FeatureCollection" as const,
+      features: stations
+        .filter((station) => station.coordinates)
+        .map((station) => ({
+          type: "Feature" as const,
+          geometry: {
+            type: "Point" as const,
+            coordinates: station.coordinates
+          },
+          properties: {
+            id: station.id,
+            name: station.name,
+            address: station.address ?? "",
+            openingHours: station.openingHours ?? "",
+            availability: station.availability ?? "unknown",
+            statusLabel: station.statusLabel ?? "Status unknown"
+          }
+        }))
+    };
+  }, [stations]);
+
+  useEffect(() => {
+    stationsRef.current = stations;
+  }, [stations]);
 
   useEffect(() => {
     if (!mapContainerRef.current) return;
@@ -48,6 +76,138 @@ export default function ChargingStationMap({
 
     map.addControl(new maplibregl.NavigationControl(), "top-right");
 
+    map.on("load", () => {
+      if (map.getSource("stations")) return;
+
+      map.addSource("stations", {
+        type: "geojson",
+        data: stationGeoJson,
+        cluster: true,
+        clusterMaxZoom: 13,
+        clusterRadius: 50
+      });
+
+      map.addLayer({
+        id: "clusters",
+        type: "circle",
+        source: "stations",
+        filter: ["has", "point_count"],
+        paint: {
+          "circle-color": [
+            "step",
+            ["get", "point_count"],
+            "#60a5fa",
+            20,
+            "#2563eb",
+            50,
+            "#1e3a8a"
+          ],
+          "circle-radius": [
+            "step",
+            ["get", "point_count"],
+            18,
+            20,
+            24,
+            50,
+            30
+          ],
+          "circle-stroke-width": 2,
+          "circle-stroke-color": "#0f172a"
+        }
+      });
+
+      map.addLayer({
+        id: "cluster-count",
+        type: "symbol",
+        source: "stations",
+        filter: ["has", "point_count"],
+        layout: {
+          "text-field": "{point_count_abbreviated}",
+          "text-font": ["Open Sans Bold", "Arial Unicode MS Bold"],
+          "text-size": 12
+        },
+        paint: {
+          "text-color": "#f8fafc"
+        }
+      });
+
+      map.addLayer({
+        id: "unclustered-point",
+        type: "circle",
+        source: "stations",
+        filter: ["!", ["has", "point_count"]],
+        paint: {
+          "circle-color": [
+            "match",
+            ["get", "availability"],
+            "available",
+            "#16a34a",
+            "occupied",
+            "#f59e0b",
+            "out_of_service",
+            "#ef4444",
+            "#64748b"
+          ],
+          "circle-radius": 7,
+          "circle-stroke-width": 2,
+          "circle-stroke-color": "#0f172a"
+        }
+      });
+
+      map.addLayer({
+        id: "selected-station",
+        type: "circle",
+        source: "stations",
+        filter: ["==", ["get", "id"], ""],
+        paint: {
+          "circle-color": "#0f172a",
+          "circle-radius": 10,
+          "circle-stroke-width": 3,
+          "circle-stroke-color": "#f8fafc"
+        }
+      });
+
+      map.on("click", "clusters", (event) => {
+        const features = map.queryRenderedFeatures(event.point, {
+          layers: ["clusters"]
+        });
+        const clusterId = features[0]?.properties?.cluster_id;
+        const source = map.getSource("stations") as maplibregl.GeoJSONSource;
+        if (!source || clusterId === undefined) return;
+        source.getClusterExpansionZoom(clusterId, (error, zoom) => {
+          if (error) return;
+          const [longitude, latitude] = (features[0].geometry as GeoJSON.Point)
+            .coordinates as [number, number];
+          map.easeTo({ center: [longitude, latitude], zoom });
+        });
+      });
+
+      map.on("click", "unclustered-point", (event) => {
+        const feature = event.features?.[0];
+        if (!feature) return;
+        const properties = feature.properties ?? {};
+        const stationId = String(properties.id ?? "");
+        const station = stationsRef.current.find((item) => item.id === stationId);
+        if (station) {
+          onStationSelect?.(station);
+        }
+      });
+
+      map.on("mouseenter", "clusters", () => {
+        map.getCanvas().style.cursor = "pointer";
+      });
+      map.on("mouseleave", "clusters", () => {
+        map.getCanvas().style.cursor = "";
+      });
+
+      map.on("mouseenter", "unclustered-point", () => {
+        map.getCanvas().style.cursor = "pointer";
+      });
+      map.on("mouseleave", "unclustered-point", () => {
+        map.getCanvas().style.cursor = "";
+      });
+    });
+
     mapRef.current = map;
 
     return () => map.remove();
@@ -57,81 +217,70 @@ export default function ChargingStationMap({
     const map = mapRef.current;
     if (!map) return;
 
-    markersRef.current.forEach((marker) => marker.remove());
-    markersRef.current = [];
-    markerByIdRef.current.clear();
-
-    stations.forEach((station) => {
-      const markerEl = document.createElement("button");
-      markerEl.type = "button";
-      markerEl.className = "charging-marker";
-      markerEl.setAttribute("aria-label", `Charging station ${station.name}`);
-
-      // Add status-based color class
-      const statusClass = station.availability 
-        ? `charging-marker--${station.availability}` 
-        : "charging-marker--unknown";
-      markerEl.classList.add(statusClass);
-
-      if (selectedStation?.id === station.id) {
-        markerEl.classList.add("charging-marker--active");
-      }
-
-      markerEl.addEventListener("click", () => {
-        onStationSelect?.(station);
-        if (station.coordinates) {
-          map.flyTo({ center: station.coordinates, zoom: 13, speed: 1.2 });
-        }
-      });
-
-      const availabilityLabel =
-        station.availability === "available"
-          ? "Available"
-          : station.availability === "occupied"
-          ? "Occupied"
-          : station.availability === "out_of_service"
-          ? "Out of service"
-          : station.statusLabel || "Status unknown";
-      const popup = new maplibregl.Popup({ offset: 20 }).setHTML(
-        `<div class="text-sm font-semibold">${station.name}</div>` +
-          (station.address
-            ? `<div class="text-xs text-muted-foreground">${station.address}</div>`
-            : "") +
-          `<div class="text-xs mt-1">${availabilityLabel}</div>` +
-          (station.openingHours
-            ? `<div class="text-xs text-muted-foreground">${station.openingHours}</div>`
-            : "")
-      );
-
-      const marker = new maplibregl.Marker({ element: markerEl })
-        .setLngLat(station.coordinates)
-        .setPopup(popup)
-        .addTo(map);
-
-      markersRef.current.push(marker);
-      markerByIdRef.current.set(station.id, marker);
-    });
-    if (userLocation) {
-      const userMarker = document.createElement("div");
-      userMarker.className = "user-marker";
-      const marker = new maplibregl.Marker({ element: userMarker })
-        .setLngLat(userLocation)
-        .addTo(map);
-      markersRef.current.push(marker);
+    const source = map.getSource("stations") as maplibregl.GeoJSONSource | undefined;
+    if (source) {
+      source.setData(stationGeoJson);
     }
-  }, [stations, selectedStation, onStationSelect, userLocation]);
+
+    if (userLocation) {
+      if (!userMarkerRef.current) {
+        const userMarker = document.createElement("div");
+        userMarker.className = "user-marker";
+        userMarkerRef.current = new maplibregl.Marker({ element: userMarker })
+          .setLngLat(userLocation)
+          .addTo(map);
+      } else {
+        userMarkerRef.current.setLngLat(userLocation);
+      }
+    } else if (userMarkerRef.current) {
+      userMarkerRef.current.remove();
+      userMarkerRef.current = null;
+    }
+  }, [stationGeoJson, userLocation]);
 
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !selectedStation) return;
 
     map.flyTo({ center: selectedStation.coordinates, zoom: 12.5, speed: 1.2 });
-    const marker = markerByIdRef.current.get(selectedStation.id);
-    if (marker) {
-      const popup = marker.getPopup();
-      if (popup && !popup.isOpen()) {
-        marker.togglePopup();
+    if (map.getLayer("selected-station")) {
+      map.setFilter("selected-station", ["==", ["get", "id"], selectedStation.id]);
+    }
+
+    const availabilityLabel =
+      selectedStation.availability === "available"
+        ? "Available"
+        : selectedStation.availability === "occupied"
+        ? "Occupied"
+        : selectedStation.availability === "out_of_service"
+        ? "Out of service"
+        : selectedStation.statusLabel || "Status unknown";
+
+    popupRef.current?.remove();
+    popupRef.current = new maplibregl.Popup({ offset: 20 })
+      .setLngLat(selectedStation.coordinates)
+      .setHTML(
+        `<div class="text-sm font-semibold">${selectedStation.name}</div>` +
+          (selectedStation.address
+            ? `<div class="text-xs text-muted-foreground">${selectedStation.address}</div>`
+            : "") +
+          `<div class="text-xs mt-1">${availabilityLabel}</div>` +
+          (selectedStation.openingHours
+            ? `<div class="text-xs text-muted-foreground">${selectedStation.openingHours}</div>`
+            : "")
+      )
+      .addTo(map);
+  }, [selectedStation]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    if (!selectedStation) {
+      if (map.getLayer("selected-station")) {
+        map.setFilter("selected-station", ["==", ["get", "id"], ""]);
       }
+      popupRef.current?.remove();
+      popupRef.current = null;
     }
   }, [selectedStation]);
 
