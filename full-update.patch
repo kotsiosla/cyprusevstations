@@ -1,0 +1,537 @@
+From 556d641dfc74d1afcf4ef6b50131e5287a87965b Mon Sep 17 00:00:00 2001
+From: Codex <codex@openai.com>
+Date: Fri, 2 Jan 2026 21:25:12 +0000
+Subject: [PATCH] Consolidate map controls and refactor stations to clustered
+ GeoJSON layers
+
+### Motivation
+- Remove duplicate on-map zoom controls and provide a single, consistent control stack for map interactions.
+- Replace manual marker management with vectorized GeoJSON layers to enable clustering, filtering and better performance.
+- Expose a programmatic locate hook so the map can request user location from the parent component.
+- Improve base tiles and popup styling to match the UI theme and clearer attribution.
+
+### Description
+- Removed the duplicate left-side zoom control and consolidated all control buttons (zoom, locate, reset, toggle stations) into a single stack rendered on the right side of the map.
+- Replaced individual `Marker` creation with a `stations` GeoJSON source and added clustered layers (`clusters`, `cluster-count`, `unclustered-point`, `selected-station`) plus popup rendering for the selected station.
+- Added `showStations` state to toggle station layer visibility, `userMarker` handling for `userLocation`, an `onRequestLocation` prop and locate/reset/zoom handlers (`handleLocate`, `handleResetView`, `handleZoomIn`, `handleZoomOut`).
+- Switched raster tiles to Esri World Imagery attribution and added popup/map CSS tweaks in `index.css` for consistent theming.
+
+### Testing
+- Started the dev server with `npm run dev` and Vite reported ready (succeeded).
+- Ran a Playwright screenshot script that produced `artifacts/map-controls.png` to verify the updated controls rendered (succeeded).
+- No unit tests were added or executed as part of this change.
+- Visual verification was captured via the generated screenshot artifact (`artifacts/map-controls.png`).
+---
+ src/components/ChargingStationMap.tsx | 388 +++++++++++++++++++++-----
+ src/index.css                         |  11 +
+ src/pages/Index.tsx                   |   5 +-
+ 3 files changed, 326 insertions(+), 78 deletions(-)
+
+diff --git a/src/components/ChargingStationMap.tsx b/src/components/ChargingStationMap.tsx
+index 4b7f79c..da1d4e5 100644
+--- a/src/components/ChargingStationMap.tsx
++++ b/src/components/ChargingStationMap.tsx
+@@ -1,42 +1,77 @@
+-import { useEffect, useRef } from "react";
++import { useEffect, useMemo, useRef, useState } from "react";
+ import maplibregl from "maplibre-gl";
+ import "maplibre-gl/dist/maplibre-gl.css";
++import { Crosshair, Home, SlidersHorizontal, ZoomIn, ZoomOut } from "lucide-react";
+ import { ChargingStation } from "@/lib/chargingStations";
+ 
+ interface ChargingStationMapProps {
+   stations: ChargingStation[];
+   selectedStation?: ChargingStation | null;
+   onStationSelect?: (station: ChargingStation) => void;
++  onRequestLocation?: () => void;
+   userLocation?: [number, number] | null;
+ }
+ 
++const defaultView = {
++  center: [33.3823, 35.1856] as [number, number],
++  zoom: 8.2
++};
++
+ const mapStyle = {
+   version: 8 as const,
+   sources: {
+-    osm: {
++    esri: {
+       type: "raster" as const,
+       tiles: [
+-        "https://a.tile.openstreetmap.org/{z}/{x}/{y}.png",
+-        "https://b.tile.openstreetmap.org/{z}/{x}/{y}.png",
+-        "https://c.tile.openstreetmap.org/{z}/{x}/{y}.png"
++        "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
+       ],
+       tileSize: 256,
+-      attribution: "© OpenStreetMap contributors"
++      attribution: "Tiles © Esri — Source: Esri, Maxar, Earthstar Geographics, and the GIS User Community"
+     }
+   },
+-  layers: [{ id: "osm", type: "raster" as const, source: "osm" }]
++  layers: [{ id: "esri-satellite", type: "raster" as const, source: "esri" }]
+ };
+ 
+ export default function ChargingStationMap({
+   stations,
+   selectedStation,
+   onStationSelect,
++  onRequestLocation,
+   userLocation
+ }: ChargingStationMapProps) {
+   const mapContainerRef = useRef<HTMLDivElement | null>(null);
+   const mapRef = useRef<maplibregl.Map | null>(null);
+-  const markersRef = useRef<maplibregl.Marker[]>([]);
+-  const markerByIdRef = useRef<Map<string, maplibregl.Marker>>(new Map());
++  const popupRef = useRef<maplibregl.Popup | null>(null);
++  const userMarkerRef = useRef<maplibregl.Marker | null>(null);
++  const stationsRef = useRef<ChargingStation[]>(stations);
++  const [showStations, setShowStations] = useState(true);
++
++  const stationGeoJson = useMemo(() => {
++    return {
++      type: "FeatureCollection" as const,
++      features: stations
++        .filter((station) => station.coordinates)
++        .map((station) => ({
++          type: "Feature" as const,
++          geometry: {
++            type: "Point" as const,
++            coordinates: station.coordinates
++          },
++          properties: {
++            id: station.id,
++            name: station.name,
++            address: station.address ?? "",
++            openingHours: station.openingHours ?? "",
++            availability: station.availability ?? "unknown",
++            statusLabel: station.statusLabel ?? "Status unknown"
++          }
++        }))
++    };
++  }, [stations]);
++
++  useEffect(() => {
++    stationsRef.current = stations;
++  }, [stations]);
+ 
+   useEffect(() => {
+     if (!mapContainerRef.current) return;
+@@ -44,11 +79,141 @@ export default function ChargingStationMap({
+     const map = new maplibregl.Map({
+       container: mapContainerRef.current,
+       style: mapStyle,
+-      center: [33.3823, 35.1856],
+-      zoom: 8.2
++      center: defaultView.center,
++      zoom: defaultView.zoom
+     });
+ 
+-    map.addControl(new maplibregl.NavigationControl(), "top-right");
++    map.on("load", () => {
++      if (map.getSource("stations")) return;
++
++      map.addSource("stations", {
++        type: "geojson",
++        data: stationGeoJson,
++        cluster: true,
++        clusterMaxZoom: 13,
++        clusterRadius: 50
++      });
++
++      map.addLayer({
++        id: "clusters",
++        type: "circle",
++        source: "stations",
++        filter: ["has", "point_count"],
++        paint: {
++          "circle-color": [
++            "step",
++            ["get", "point_count"],
++            "#60a5fa",
++            20,
++            "#2563eb",
++            50,
++            "#1e3a8a"
++          ],
++          "circle-radius": [
++            "step",
++            ["get", "point_count"],
++            18,
++            20,
++            24,
++            50,
++            30
++          ],
++          "circle-stroke-width": 2,
++          "circle-stroke-color": "#0f172a"
++        }
++      });
++
++      map.addLayer({
++        id: "cluster-count",
++        type: "symbol",
++        source: "stations",
++        filter: ["has", "point_count"],
++        layout: {
++          "text-field": "{point_count_abbreviated}",
++          "text-font": ["Open Sans Bold", "Arial Unicode MS Bold"],
++          "text-size": 12
++        },
++        paint: {
++          "text-color": "#f8fafc"
++        }
++      });
++
++      map.addLayer({
++        id: "unclustered-point",
++        type: "circle",
++        source: "stations",
++        filter: ["!", ["has", "point_count"]],
++        paint: {
++          "circle-color": [
++            "match",
++            ["get", "availability"],
++            "available",
++            "#16a34a",
++            "occupied",
++            "#f59e0b",
++            "out_of_service",
++            "#ef4444",
++            "#64748b"
++          ],
++          "circle-radius": 7,
++          "circle-stroke-width": 2,
++          "circle-stroke-color": "#0f172a"
++        }
++      });
++
++      map.addLayer({
++        id: "selected-station",
++        type: "circle",
++        source: "stations",
++        filter: ["==", ["get", "id"], ""],
++        paint: {
++          "circle-color": "#0f172a",
++          "circle-radius": 10,
++          "circle-stroke-width": 3,
++          "circle-stroke-color": "#f8fafc"
++        }
++      });
++
++      map.on("click", "clusters", (event) => {
++        const features = map.queryRenderedFeatures(event.point, {
++          layers: ["clusters"]
++        });
++        const clusterId = features[0]?.properties?.cluster_id;
++        const source = map.getSource("stations") as maplibregl.GeoJSONSource;
++        if (!source || clusterId === undefined) return;
++        source.getClusterExpansionZoom(clusterId, (error, zoom) => {
++          if (error) return;
++          const [longitude, latitude] = (features[0].geometry as GeoJSON.Point)
++            .coordinates as [number, number];
++          map.easeTo({ center: [longitude, latitude], zoom });
++        });
++      });
++
++      map.on("click", "unclustered-point", (event) => {
++        const feature = event.features?.[0];
++        if (!feature) return;
++        const properties = feature.properties ?? {};
++        const stationId = String(properties.id ?? "");
++        const station = stationsRef.current.find((item) => item.id === stationId);
++        if (station) {
++          onStationSelect?.(station);
++        }
++      });
++
++      map.on("mouseenter", "clusters", () => {
++        map.getCanvas().style.cursor = "pointer";
++      });
++      map.on("mouseleave", "clusters", () => {
++        map.getCanvas().style.cursor = "";
++      });
++
++      map.on("mouseenter", "unclustered-point", () => {
++        map.getCanvas().style.cursor = "pointer";
++      });
++      map.on("mouseleave", "unclustered-point", () => {
++        map.getCanvas().style.cursor = "";
++      });
++    });
+ 
+     mapRef.current = map;
+ 
+@@ -59,88 +224,159 @@ export default function ChargingStationMap({
+     const map = mapRef.current;
+     if (!map) return;
+ 
+-    markersRef.current.forEach((marker) => marker.remove());
+-    markersRef.current = [];
+-    markerByIdRef.current.clear();
+-
+-    stations.forEach((station) => {
+-      const markerEl = document.createElement("button");
+-      markerEl.type = "button";
+-      markerEl.className = "charging-marker";
+-      markerEl.setAttribute("aria-label", `Charging station ${station.name}`);
++    const source = map.getSource("stations") as maplibregl.GeoJSONSource | undefined;
++    if (source) {
++      source.setData(stationGeoJson);
++    }
+ 
+-      // Add status-based color class
+-      const statusClass = station.availability 
+-        ? `charging-marker--${station.availability}` 
+-        : "charging-marker--unknown";
+-      markerEl.classList.add(statusClass);
++    if (userLocation) {
++      if (!userMarkerRef.current) {
++        const userMarker = document.createElement("div");
++        userMarker.className = "user-marker";
++        userMarkerRef.current = new maplibregl.Marker({ element: userMarker })
++          .setLngLat(userLocation)
++          .addTo(map);
++      } else {
++        userMarkerRef.current.setLngLat(userLocation);
++      }
++    } else if (userMarkerRef.current) {
++      userMarkerRef.current.remove();
++      userMarkerRef.current = null;
++    }
++  }, [stationGeoJson, userLocation]);
+ 
+-      if (selectedStation?.id === station.id) {
+-        markerEl.classList.add("charging-marker--active");
++  useEffect(() => {
++    const map = mapRef.current;
++    if (!map) return;
++    const visibility = showStations ? "visible" : "none";
++    ["clusters", "cluster-count", "unclustered-point", "selected-station"].forEach((layerId) => {
++      if (map.getLayer(layerId)) {
++        map.setLayoutProperty(layerId, "visibility", visibility);
+       }
++    });
++  }, [showStations]);
+ 
+-      markerEl.addEventListener("click", () => {
+-        onStationSelect?.(station);
+-        if (station.coordinates) {
+-          map.flyTo({ center: station.coordinates, zoom: 13, speed: 1.2 });
+-        }
+-      });
++  useEffect(() => {
++    const map = mapRef.current;
++    if (!map || !selectedStation) return;
++
++    map.flyTo({ center: selectedStation.coordinates, zoom: 12.5, speed: 1.2 });
++    if (map.getLayer("selected-station")) {
++      map.setFilter("selected-station", ["==", ["get", "id"], selectedStation.id]);
++    }
++
++    const availabilityLabel =
++      selectedStation.availability === "available"
++        ? "Available"
++        : selectedStation.availability === "occupied"
++        ? "Occupied"
++        : selectedStation.availability === "out_of_service"
++        ? "Out of service"
++        : selectedStation.statusLabel || "Status unknown";
+ 
+-      const availabilityLabel =
+-        station.availability === "available"
+-          ? "Available"
+-          : station.availability === "occupied"
+-          ? "Occupied"
+-          : station.availability === "out_of_service"
+-          ? "Out of service"
+-          : station.statusLabel || "Status unknown";
+-      const popup = new maplibregl.Popup({ offset: 20 }).setHTML(
+-        `<div class="text-sm font-semibold">${station.name}</div>` +
+-          (station.address
+-            ? `<div class="text-xs text-muted-foreground">${station.address}</div>`
++    popupRef.current?.remove();
++    popupRef.current = new maplibregl.Popup({ offset: 20 })
++      .setLngLat(selectedStation.coordinates)
++      .setHTML(
++        `<div class="text-sm font-semibold">${selectedStation.name}</div>` +
++          (selectedStation.address
++            ? `<div class="text-xs text-muted-foreground">${selectedStation.address}</div>`
+             : "") +
+           `<div class="text-xs mt-1">${availabilityLabel}</div>` +
+-          (station.openingHours
+-            ? `<div class="text-xs text-muted-foreground">${station.openingHours}</div>`
++          (selectedStation.openingHours
++            ? `<div class="text-xs text-muted-foreground">${selectedStation.openingHours}</div>`
+             : "")
+-      );
+-
+-      const marker = new maplibregl.Marker({ element: markerEl })
+-        .setLngLat(station.coordinates)
+-        .setPopup(popup)
+-        .addTo(map);
+-
+-      markersRef.current.push(marker);
+-      markerByIdRef.current.set(station.id, marker);
+-    });
+-    if (userLocation) {
+-      const userMarker = document.createElement("div");
+-      userMarker.className = "user-marker";
+-      const marker = new maplibregl.Marker({ element: userMarker })
+-        .setLngLat(userLocation)
+-        .addTo(map);
+-      markersRef.current.push(marker);
+-    }
+-  }, [stations, selectedStation, onStationSelect, userLocation]);
++      )
++      .addTo(map);
++  }, [selectedStation]);
+ 
+   useEffect(() => {
+     const map = mapRef.current;
+-    if (!map || !selectedStation) return;
+-
+-    map.flyTo({ center: selectedStation.coordinates, zoom: 12.5, speed: 1.2 });
+-    const marker = markerByIdRef.current.get(selectedStation.id);
+-    if (marker) {
+-      const popup = marker.getPopup();
+-      if (popup && !popup.isOpen()) {
+-        marker.togglePopup();
++    if (!map) return;
++    if (!selectedStation) {
++      if (map.getLayer("selected-station")) {
++        map.setFilter("selected-station", ["==", ["get", "id"], ""]);
+       }
++      popupRef.current?.remove();
++      popupRef.current = null;
+     }
+   }, [selectedStation]);
+ 
++  const handleZoomIn = () => {
++    mapRef.current?.zoomIn();
++  };
++
++  const handleZoomOut = () => {
++    mapRef.current?.zoomOut();
++  };
++
++  const handleResetView = () => {
++    mapRef.current?.flyTo({ center: defaultView.center, zoom: defaultView.zoom, speed: 1.2 });
++  };
++
++  const handleLocate = () => {
++    if (userLocation) {
++      mapRef.current?.flyTo({ center: userLocation, zoom: 12.5, speed: 1.2 });
++      return;
++    }
++    if (onRequestLocation) {
++      onRequestLocation();
++      return;
++    }
++    if (!navigator.geolocation) return;
++    navigator.geolocation.getCurrentPosition((position) => {
++      const coords: [number, number] = [position.coords.longitude, position.coords.latitude];
++      mapRef.current?.flyTo({ center: coords, zoom: 12.5, speed: 1.2 });
++    });
++  };
++
+   return (
+     <div className="relative w-full h-full">
+       <div ref={mapContainerRef} className="absolute inset-0" />
+-      
++
++      <div className="absolute top-4 right-4 z-10 flex flex-col gap-2">
++        <button
++          type="button"
++          onClick={() => setShowStations((prev) => !prev)}
++          className="rounded-full border bg-background/90 p-2 shadow-soft backdrop-blur transition hover:bg-background"
++          aria-label={showStations ? "Hide stations" : "Show stations"}
++        >
++          <SlidersHorizontal className="h-4 w-4" />
++        </button>
++        <button
++          type="button"
++          onClick={handleLocate}
++          className="rounded-full border bg-background/90 p-2 shadow-soft backdrop-blur transition hover:bg-background"
++          aria-label="Center on my location"
++        >
++          <Crosshair className="h-4 w-4" />
++        </button>
++        <button
++          type="button"
++          onClick={handleResetView}
++          className="rounded-full border bg-background/90 p-2 shadow-soft backdrop-blur transition hover:bg-background"
++          aria-label="Reset map view"
++        >
++          <Home className="h-4 w-4" />
++        </button>
++        <button
++          type="button"
++          onClick={handleZoomIn}
++          className="rounded-full border bg-background/90 p-2 shadow-soft backdrop-blur transition hover:bg-background"
++          aria-label="Zoom in"
++        >
++          <ZoomIn className="h-4 w-4" />
++        </button>
++        <button
++          type="button"
++          onClick={handleZoomOut}
++          className="rounded-full border bg-background/90 p-2 shadow-soft backdrop-blur transition hover:bg-background"
++          aria-label="Zoom out"
++        >
++          <ZoomOut className="h-4 w-4" />
++        </button>
++      </div>
++
+       {/* Map Legend */}
+       <div className="absolute bottom-4 left-4 bg-background/95 backdrop-blur-sm rounded-lg border shadow-soft p-3 z-10">
+         <p className="text-xs font-medium mb-2">Station Status</p>
+diff --git a/src/index.css b/src/index.css
+index 7ec72d0..9a1bd8e 100644
+--- a/src/index.css
++++ b/src/index.css
+@@ -262,3 +262,14 @@
+   border: 2px solid hsl(var(--background));
+   box-shadow: 0 0 0 6px hsl(var(--primary) / 0.2);
+ }
++
++.maplibregl-popup-content {
++  color: hsl(var(--foreground));
++  background: hsl(var(--background));
++  border: 1px solid hsl(var(--border));
++  box-shadow: var(--shadow-soft);
++}
++
++.maplibregl-popup-tip {
++  border-top-color: hsl(var(--background));
++}
+diff --git a/src/pages/Index.tsx b/src/pages/Index.tsx
+index f9108d1..0d8a762 100644
+--- a/src/pages/Index.tsx
++++ b/src/pages/Index.tsx
+@@ -248,6 +248,7 @@ const Index = () => {
+                   stations={filteredStations}
+                   selectedStation={selectedStation}
+                   onStationSelect={setSelectedStation}
++                  onRequestLocation={requestLocation}
+                   userLocation={userLocation}
+                 />
+               </div>
+@@ -355,12 +356,12 @@ const Index = () => {
+                   </a>
+                   <span className="text-muted-foreground/60">·</span>
+                   <a
+-                    href="https://www.openstreetmap.org"
++                    href="https://www.esri.com/en-us/arcgis/products/arcgis-online/features/world-imagery"
+                     target="_blank"
+                     rel="noopener noreferrer"
+                     className="text-primary hover:underline"
+                   >
+-                    OpenStreetMap
++                    Esri World Imagery
+                   </a>
+                 </div>
+               </div>
+-- 
+2.43.0
