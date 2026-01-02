@@ -215,9 +215,6 @@ export default function ChargingStationMap({
       });
     });
 
-    map.on("load", () => {
-      if (map.getSource("stations")) return;
-
       map.addSource("stations", {
         type: "geojson",
         data: stationGeoJson,
@@ -364,25 +361,6 @@ export default function ChargingStationMap({
   return (
     <div className="relative w-full h-full">
       <div ref={mapContainerRef} className="absolute inset-0" />
-
-      <div className="absolute top-4 left-4 z-10 flex flex-col gap-2">
-        <button
-          type="button"
-          onClick={handleZoomIn}
-          className="rounded-md border bg-background/90 p-2 shadow-soft backdrop-blur transition hover:bg-background"
-          aria-label="Zoom in"
-        >
-          <ZoomIn className="h-4 w-4" />
-        </button>
-        <button
-          type="button"
-          onClick={handleZoomOut}
-          className="rounded-md border bg-background/90 p-2 shadow-soft backdrop-blur transition hover:bg-background"
-          aria-label="Zoom out"
-        >
-          <ZoomOut className="h-4 w-4" />
-        </button>
-      </div>
 
       <div className="absolute top-4 right-4 z-10 flex flex-col gap-2">
         <button
