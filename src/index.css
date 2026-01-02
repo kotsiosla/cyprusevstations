@@ -189,7 +189,7 @@
   width: 36px;
   height: 36px;
   border-radius: 9999px;
-  background: hsl(var(--primary));
+  background: hsl(var(--muted-foreground));
   border: 3px solid hsl(var(--background));
   box-shadow: var(--shadow-soft);
   cursor: pointer;
@@ -203,14 +203,55 @@
   content: "";
   width: 10px;
   height: 10px;
-  background: hsl(var(--primary-foreground));
+  background: hsl(var(--background));
   border-radius: 9999px;
 }
 
+/* Status-based marker colors */
+.charging-marker--available {
+  background: hsl(142 76% 36%); /* Green */
+}
+
+.charging-marker--occupied {
+  background: hsl(38 92% 50%); /* Orange */
+}
+
+.charging-marker--out_of_service {
+  background: hsl(0 84% 60%); /* Red */
+}
+
+.charging-marker--unknown {
+  background: hsl(var(--muted-foreground));
+}
+
 .charging-marker--active {
-  transform: scale(1.15);
-  box-shadow: var(--shadow-glow);
-  background: hsl(var(--accent));
+  transform: scale(1.2);
+  box-shadow: 0 0 0 4px hsl(var(--primary) / 0.3), var(--shadow-glow);
+  z-index: 10;
+}
+
+.charging-marker:hover {
+  transform: scale(1.1);
+}
+
+.charging-marker--active:hover {
+  transform: scale(1.2);
+}
+
+/* Pulse animation for available markers */
+.charging-marker--available::before {
+  content: "";
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  border-radius: 9999px;
+  background: hsl(142 76% 36% / 0.4);
+  animation: marker-pulse 2s ease-out infinite;
+}
+
+@keyframes marker-pulse {
+  0% { transform: scale(1); opacity: 0.6; }
+  100% { transform: scale(1.8); opacity: 0; }
 }
 
 .user-marker {

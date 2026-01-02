@@ -69,6 +69,12 @@ export default function ChargingStationMap({
       markerEl.className = "charging-marker";
       markerEl.setAttribute("aria-label", `Charging station ${station.name}`);
 
+      // Add status-based color class
+      const statusClass = station.availability 
+        ? `charging-marker--${station.availability}` 
+        : "charging-marker--unknown";
+      markerEl.classList.add(statusClass);
+
       if (selectedStation?.id === station.id) {
         markerEl.classList.add("charging-marker--active");
       }
@@ -131,5 +137,32 @@ export default function ChargingStationMap({
     }
   }, [selectedStation]);
 
-  return <div ref={mapContainerRef} style={{ width: "100%", height: "100%" }} />;
+  return (
+    <div className="relative w-full h-full">
+      <div ref={mapContainerRef} className="absolute inset-0" />
+      
+      {/* Map Legend */}
+      <div className="absolute bottom-4 left-4 bg-background/95 backdrop-blur-sm rounded-lg border shadow-soft p-3 z-10">
+        <p className="text-xs font-medium mb-2">Station Status</p>
+        <div className="space-y-1.5">
+          <div className="flex items-center gap-2">
+            <div className="w-3 h-3 rounded-full bg-[hsl(142,76%,36%)]" />
+            <span className="text-xs text-muted-foreground">Available</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="w-3 h-3 rounded-full bg-[hsl(38,92%,50%)]" />
+            <span className="text-xs text-muted-foreground">Occupied</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="w-3 h-3 rounded-full bg-[hsl(0,84%,60%)]" />
+            <span className="text-xs text-muted-foreground">Out of Service</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="w-3 h-3 rounded-full bg-muted-foreground" />
+            <span className="text-xs text-muted-foreground">Unknown</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
 }
