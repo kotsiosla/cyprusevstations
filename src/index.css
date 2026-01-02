@@ -262,3 +262,14 @@
   border: 2px solid hsl(var(--background));
   box-shadow: 0 0 0 6px hsl(var(--primary) / 0.2);
 }
+
+.maplibregl-popup-content {
+  color: hsl(var(--foreground));
+  background: hsl(var(--background));
+  border: 1px solid hsl(var(--border));
+  box-shadow: var(--shadow-soft);
+}
+
+.maplibregl-popup-tip {
+  border-top-color: hsl(var(--background));
+}
