@@ -44,6 +44,7 @@ export default function ChargingStationMap({
   const popupRef = useRef<maplibregl.Popup | null>(null);
   const userMarkerRef = useRef<maplibregl.Marker | null>(null);
   const stationsRef = useRef<ChargingStation[]>(stations);
+  const stationGeoJsonRef = useRef(stationGeoJson);
   const [showStations, setShowStations] = useState(true);
 
   const stationGeoJson = useMemo(() => {
@@ -74,6 +75,10 @@ export default function ChargingStationMap({
   }, [stations]);
 
   useEffect(() => {
+    stationGeoJsonRef.current = stationGeoJson;
+  }, [stationGeoJson]);
+
+  useEffect(() => {
     if (!mapContainerRef.current) return;
     if (mapRef.current) return;
 
@@ -87,13 +92,13 @@ export default function ChargingStationMap({
     map.on("load", () => {
       const existingSource = map.getSource("stations") as maplibregl.GeoJSONSource | undefined;
       if (existingSource) {
-        existingSource.setData(stationGeoJson);
+        existingSource.setData(stationGeoJsonRef.current);
         return;
       }
 
       map.addSource("stations", {
         type: "geojson",
-        data: stationGeoJson,
+        data: stationGeoJsonRef.current,
         cluster: true,
         clusterMaxZoom: 13,
         clusterRadius: 50
