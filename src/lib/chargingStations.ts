@@ -35,6 +35,14 @@ export interface ChargingStation {
   coordinates: [number, number];
 }
 
+type UnknownRecord = Record<string, unknown>;
+
+const isRecord = (value: unknown): value is UnknownRecord =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+const asStringRecord = (value: unknown): Record<string, string | undefined> =>
+  isRecord(value) ? (value as Record<string, string | undefined>) : {};
+
 function cyprusChargingOverpassQuery() {
   return `
 [out:json][timeout:90];
@@ -219,8 +227,8 @@ type ExternalStatus = {
   coordinates: [number, number];
 };
 
-function deriveStatusFromProps(props: Record<string, any>) {
-  const readStatusValue = (record?: Record<string, any>) => {
+function deriveStatusFromProps(props: UnknownRecord) {
+  const readStatusValue = (record?: UnknownRecord) => {
     if (!record || typeof record !== "object") return undefined;
     return (
       record.status ??
@@ -252,7 +260,7 @@ function deriveStatusFromProps(props: Record<string, any>) {
     );
   };
 
-  const deriveStatusFromCounts = (record?: Record<string, any>) => {
+  const deriveStatusFromCounts = (record?: UnknownRecord) => {
     if (!record || typeof record !== "object") return undefined;
     const availableCount = Number(
       record.available ?? record.available_count ?? record.free ?? record.free_count ?? 0
@@ -281,10 +289,10 @@ function deriveStatusFromProps(props: Record<string, any>) {
   const directValue = readStatusValue(props);
 
   if (directValue !== undefined && directValue !== null && directValue !== "") {
-    if (typeof directValue === "object") {
-      const countBased = deriveStatusFromCounts(directValue as Record<string, any>);
+    if (isRecord(directValue)) {
+      const countBased = deriveStatusFromCounts(directValue);
       if (countBased) return countBased;
-      const nestedValue = readStatusValue(directValue as Record<string, any>);
+      const nestedValue = readStatusValue(directValue);
       if (nestedValue !== undefined && nestedValue !== null && nestedValue !== "") {
         return nestedValue;
       }
@@ -299,7 +307,7 @@ function deriveStatusFromProps(props: Record<string, any>) {
   const connectors = props.connectors ?? props.connector ?? props.outlets ?? props.ports;
   if (Array.isArray(connectors)) {
     for (const connector of connectors) {
-      if (!connector || typeof connector !== "object") continue;
+      if (!isRecord(connector)) continue;
       const connectorStatus = readStatusValue(connector);
       if (connectorStatus !== undefined && connectorStatus !== null && connectorStatus !== "") {
         return connectorStatus;
@@ -320,7 +328,7 @@ function deriveStatusFromProps(props: Record<string, any>) {
   for (const collection of nestedCollections) {
     if (!Array.isArray(collection)) continue;
     for (const entry of collection) {
-      if (!entry || typeof entry !== "object") continue;
+      if (!isRecord(entry)) continue;
       const entryStatus = readStatusValue(entry);
       if (entryStatus !== undefined && entryStatus !== null && entryStatus !== "") {
         return entryStatus;
@@ -328,7 +336,7 @@ function deriveStatusFromProps(props: Record<string, any>) {
       const entryConnectors = entry.connectors ?? entry.connector ?? entry.outlets ?? entry.ports;
       if (!Array.isArray(entryConnectors)) continue;
       for (const connector of entryConnectors) {
-        if (!connector || typeof connector !== "object") continue;
+        if (!isRecord(connector)) continue;
         const connectorStatus = readStatusValue(connector);
         if (connectorStatus !== undefined && connectorStatus !== null && connectorStatus !== "") {
           return connectorStatus;
@@ -354,7 +362,7 @@ function parseCsv(text: string) {
   });
 }
 
-function extractExternalItems(data: any): any[] {
+function extractExternalItems(data: unknown): unknown[] {
   if (Array.isArray(data)) return data;
   if (Array.isArray(data?.stations)) return data.stations;
   if (Array.isArray(data?.features)) return data.features;
@@ -365,10 +373,10 @@ function extractExternalItems(data: any): any[] {
   return [];
 }
 
-function parseExternalStatusItem(item: any): ExternalStatus | null {
-  if (!item || typeof item !== "object") return null;
+function parseExternalStatusItem(item: unknown): ExternalStatus | null {
+  if (!isRecord(item)) return null;
 
-  const props = item.properties ?? item;
+  const props = isRecord(item.properties) ? item.properties : item;
   const name =
     props.name ||
     props.title ||
@@ -395,35 +403,41 @@ function parseExternalStatusItem(item: any): ExternalStatus | null {
     props.type;
   const statusValue = deriveStatusFromProps(props);
 
+  const location = isRecord(props.location) ? props.location : undefined;
+  const locationCoords = Array.isArray(location?.coordinates) ? location.coordinates : undefined;
+  const coordinates = Array.isArray(props.coordinates) ? props.coordinates : undefined;
+  const geometry = isRecord(item.geometry) ? item.geometry : undefined;
+  const geometryCoords = Array.isArray(geometry?.coordinates) ? geometry.coordinates : undefined;
+
   const latRaw =
     props.lat ??
     props.latitude ??
     props.y ??
-    props.location?.lat ??
-    props.location?.latitude ??
-    props.location?.y ??
-    props.location?.coordinates?.[1] ??
-    props.coordinates?.[1] ??
+    location?.lat ??
+    location?.latitude ??
+    location?.y ??
+    locationCoords?.[1] ??
+    coordinates?.[1] ??
     item.lat ??
     item.latitude ??
     item.y ??
-    item?.geometry?.coordinates?.[1];
+    geometryCoords?.[1];
   const lonRaw =
     props.lon ??
     props.lng ??
     props.longitude ??
     props.x ??
-    props.location?.lon ??
-    props.location?.lng ??
-    props.location?.longitude ??
-    props.location?.x ??
-    props.location?.coordinates?.[0] ??
-    props.coordinates?.[0] ??
+    location?.lon ??
+    location?.lng ??
+    location?.longitude ??
+    location?.x ??
+    locationCoords?.[0] ??
+    coordinates?.[0] ??
     item.lon ??
     item.lng ??
     item.longitude ??
     item.x ??
-    item?.geometry?.coordinates?.[0];
+    geometryCoords?.[0];
 
   const lat = typeof latRaw === "string" ? Number(latRaw) : latRaw;
   const lon = typeof lonRaw === "string" ? Number(lonRaw) : lonRaw;
@@ -635,7 +649,7 @@ async function fetchExternalStatusData(): Promise<ExternalStatus[]> {
       // Try JSON/CSV parsing
       try {
         const data = contentType.includes("text/csv") ? textContent : JSON.parse(textContent);
-        const items: any[] =
+        const items: unknown[] =
           typeof data === "string" ? parseCsv(data) : extractExternalItems(data);
 
         if (!items.length) continue;
@@ -657,7 +671,7 @@ async function fetchExternalStatusData(): Promise<ExternalStatus[]> {
 }
 
 async function fetchWithFailover(body: string) {
-  let lastErr: any = null;
+  let lastErr: unknown = null;
   for (const url of OVERPASS_MIRRORS) {
     try {
       const res = await fetch(url, {
@@ -674,10 +688,19 @@ async function fetchWithFailover(body: string) {
   throw lastErr ?? new Error("Overpass failed");
 }
 
+type OverpassElement = {
+  type?: string;
+  id?: string | number;
+  lat?: number;
+  lon?: number;
+  center?: { lat?: number; lon?: number };
+  tags?: Record<string, string | undefined>;
+};
+
 export async function fetchChargingStations(): Promise<ChargingStation[]> {
   try {
     const osm = await fetchWithFailover(cyprusChargingOverpassQuery());
-    const elements = osm?.elements ?? [];
+    const elements = Array.isArray(osm?.elements) ? (osm.elements as OverpassElement[]) : [];
     const externalStatuses = await fetchExternalStatusData();
     const statusByCoord = new Map<string, ExternalStatus>();
     const statusByName = new Map<string, ExternalStatus>();
@@ -694,8 +717,8 @@ export async function fetchChargingStations(): Promise<ChargingStation[]> {
     const maxStatusDistanceKm = 0.5;
 
     const stations: ChargingStation[] = elements
-      .map((el: any) => {
-        const tags = el.tags ?? {};
+      .map((el) => {
+        const tags = asStringRecord(el.tags);
         const lat = el.lat ?? el.center?.lat;
         const lon = el.lon ?? el.center?.lon;
         if (typeof lat !== "number" || typeof lon !== "number") return null;
@@ -726,7 +749,7 @@ export async function fetchChargingStations(): Promise<ChargingStation[]> {
         }
 
         return {
-          id: `${el.type}/${el.id}`,
+          id: `${String(el.type ?? "node")}/${String(el.id ?? "")}`,
           name: toTitleCase(name),
           operator: tags.operator || tags.network,
           address: address || matchedStatus?.address || city,

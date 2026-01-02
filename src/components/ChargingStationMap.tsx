@@ -44,6 +44,7 @@ export default function ChargingStationMap({
   const popupRef = useRef<maplibregl.Popup | null>(null);
   const userMarkerRef = useRef<maplibregl.Marker | null>(null);
   const stationsRef = useRef<ChargingStation[]>(stations);
+  const onStationSelectRef = useRef(onStationSelect);
   const [showStations, setShowStations] = useState(true);
 
   const stationGeoJson = useMemo(() => {
@@ -165,6 +166,10 @@ export default function ChargingStationMap({
   }, [stations]);
 
   useEffect(() => {
+    onStationSelectRef.current = onStationSelect;
+  }, [onStationSelect]);
+
+  useEffect(() => {
     stationGeoJsonRef.current = stationGeoJson;
   }, [stationGeoJson]);
 
@@ -219,7 +224,7 @@ export default function ChargingStationMap({
         const stationId = String(properties.id ?? "");
         const station = stationsRef.current.find((item) => item.id === stationId);
         if (station) {
-          onStationSelect?.(station);
+          onStationSelectRef.current?.(station);
         }
       });
 
