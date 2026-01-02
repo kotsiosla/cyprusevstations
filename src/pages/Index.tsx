@@ -355,12 +355,12 @@ const Index = () => {
                   </a>
                   <span className="text-muted-foreground/60">·</span>
                   <a
-                    href="https://www.openstreetmap.org"
+                    href="https://www.esri.com/en-us/arcgis/products/arcgis-online/features/world-imagery"
                     target="_blank"
                     rel="noopener noreferrer"
                     className="text-primary hover:underline"
                   >
-                    OpenStreetMap
+                    Esri World Imagery
                   </a>
                 </div>
               </div>
