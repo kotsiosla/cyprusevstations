@@ -248,6 +248,7 @@ const Index = () => {
                   stations={filteredStations}
                   selectedStation={selectedStation}
                   onStationSelect={setSelectedStation}
+                  onRequestLocation={requestLocation}
                   userLocation={userLocation}
                 />
               </div>

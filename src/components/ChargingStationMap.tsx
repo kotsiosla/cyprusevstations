@@ -1,14 +1,21 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
+import { Crosshair, Home, SlidersHorizontal, ZoomIn, ZoomOut } from "lucide-react";
 import { ChargingStation } from "@/lib/chargingStations";
 
 interface ChargingStationMapProps {
   stations: ChargingStation[];
   selectedStation?: ChargingStation | null;
   onStationSelect?: (station: ChargingStation) => void;
+  onRequestLocation?: () => void;
   userLocation?: [number, number] | null;
 }
+
+const defaultView = {
+  center: [33.3823, 35.1856] as [number, number],
+  zoom: 8.2
+};
 
 const mapStyle = {
   version: 8 as const,
@@ -29,6 +36,7 @@ export default function ChargingStationMap({
   stations,
   selectedStation,
   onStationSelect,
+  onRequestLocation,
   userLocation
 }: ChargingStationMapProps) {
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
@@ -36,6 +44,7 @@ export default function ChargingStationMap({
   const popupRef = useRef<maplibregl.Popup | null>(null);
   const userMarkerRef = useRef<maplibregl.Marker | null>(null);
   const stationsRef = useRef<ChargingStation[]>(stations);
+  const [showStations, setShowStations] = useState(true);
 
   const stationGeoJson = useMemo(() => {
     return {
@@ -70,11 +79,9 @@ export default function ChargingStationMap({
     const map = new maplibregl.Map({
       container: mapContainerRef.current,
       style: mapStyle,
-      center: [33.3823, 35.1856],
-      zoom: 8.2
+      center: defaultView.center,
+      zoom: defaultView.zoom
     });
-
-    map.addControl(new maplibregl.NavigationControl(), "top-right");
 
     map.on("load", () => {
       if (map.getSource("stations")) return;
@@ -208,14 +215,45 @@ export default function ChargingStationMap({
       });
     });
 
-    mapRef.current = map;
+    map.on("load", () => {
+      if (map.getSource("stations")) return;
 
-    return () => map.remove();
-  }, []);
+      map.addSource("stations", {
+        type: "geojson",
+        data: stationGeoJson,
+        cluster: true,
+        clusterMaxZoom: 13,
+        clusterRadius: 50
+      });
 
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map) return;
+      map.addLayer({
+        id: "clusters",
+        type: "circle",
+        source: "stations",
+        filter: ["has", "point_count"],
+        paint: {
+          "circle-color": [
+            "step",
+            ["get", "point_count"],
+            "#60a5fa",
+            20,
+            "#2563eb",
+            50,
+            "#1e3a8a"
+          ],
+          "circle-radius": [
+            "step",
+            ["get", "point_count"],
+            18,
+            20,
+            24,
+            50,
+            30
+          ],
+          "circle-stroke-width": 2,
+          "circle-stroke-color": "#0f172a"
+        }
+      });
 
     const source = map.getSource("stations") as maplibregl.GeoJSONSource | undefined;
     if (source) {
@@ -237,6 +275,17 @@ export default function ChargingStationMap({
       userMarkerRef.current = null;
     }
   }, [stationGeoJson, userLocation]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    const visibility = showStations ? "visible" : "none";
+    ["clusters", "cluster-count", "unclustered-point", "selected-station"].forEach((layerId) => {
+      if (map.getLayer(layerId)) {
+        map.setLayoutProperty(layerId, "visibility", visibility);
+      }
+    });
+  }, [showStations]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -284,10 +333,100 @@ export default function ChargingStationMap({
     }
   }, [selectedStation]);
 
+  const handleZoomIn = () => {
+    mapRef.current?.zoomIn();
+  };
+
+  const handleZoomOut = () => {
+    mapRef.current?.zoomOut();
+  };
+
+  const handleResetView = () => {
+    mapRef.current?.flyTo({ center: defaultView.center, zoom: defaultView.zoom, speed: 1.2 });
+  };
+
+  const handleLocate = () => {
+    if (userLocation) {
+      mapRef.current?.flyTo({ center: userLocation, zoom: 12.5, speed: 1.2 });
+      return;
+    }
+    if (onRequestLocation) {
+      onRequestLocation();
+      return;
+    }
+    if (!navigator.geolocation) return;
+    navigator.geolocation.getCurrentPosition((position) => {
+      const coords: [number, number] = [position.coords.longitude, position.coords.latitude];
+      mapRef.current?.flyTo({ center: coords, zoom: 12.5, speed: 1.2 });
+    });
+  };
+
   return (
     <div className="relative w-full h-full">
       <div ref={mapContainerRef} className="absolute inset-0" />
-      
+
+      <div className="absolute top-4 left-4 z-10 flex flex-col gap-2">
+        <button
+          type="button"
+          onClick={handleZoomIn}
+          className="rounded-md border bg-background/90 p-2 shadow-soft backdrop-blur transition hover:bg-background"
+          aria-label="Zoom in"
+        >
+          <ZoomIn className="h-4 w-4" />
+        </button>
+        <button
+          type="button"
+          onClick={handleZoomOut}
+          className="rounded-md border bg-background/90 p-2 shadow-soft backdrop-blur transition hover:bg-background"
+          aria-label="Zoom out"
+        >
+          <ZoomOut className="h-4 w-4" />
+        </button>
+      </div>
+
+      <div className="absolute top-4 right-4 z-10 flex flex-col gap-2">
+        <button
+          type="button"
+          onClick={() => setShowStations((prev) => !prev)}
+          className="rounded-full border bg-background/90 p-2 shadow-soft backdrop-blur transition hover:bg-background"
+          aria-label={showStations ? "Hide stations" : "Show stations"}
+        >
+          <SlidersHorizontal className="h-4 w-4" />
+        </button>
+        <button
+          type="button"
+          onClick={handleLocate}
+          className="rounded-full border bg-background/90 p-2 shadow-soft backdrop-blur transition hover:bg-background"
+          aria-label="Center on my location"
+        >
+          <Crosshair className="h-4 w-4" />
+        </button>
+        <button
+          type="button"
+          onClick={handleResetView}
+          className="rounded-full border bg-background/90 p-2 shadow-soft backdrop-blur transition hover:bg-background"
+          aria-label="Reset map view"
+        >
+          <Home className="h-4 w-4" />
+        </button>
+        <button
+          type="button"
+          onClick={handleZoomIn}
+          className="rounded-full border bg-background/90 p-2 shadow-soft backdrop-blur transition hover:bg-background"
+          aria-label="Zoom in"
+        >
+          <ZoomIn className="h-4 w-4" />
+        </button>
+        <button
+          type="button"
+          onClick={handleZoomOut}
+          className="rounded-full border bg-background/90 p-2 shadow-soft backdrop-blur transition hover:bg-background"
+          aria-label="Zoom out"
+        >
+          <ZoomOut className="h-4 w-4" />
+        </button>
+      </div>
+
       {/* Map Legend */}
       <div className="absolute bottom-4 left-4 bg-background/95 backdrop-blur-sm rounded-lg border shadow-soft p-3 z-10">
         <p className="text-xs font-medium mb-2">Station Status</p>
