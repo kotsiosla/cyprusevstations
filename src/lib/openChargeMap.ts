@@ -34,7 +34,8 @@ export type OpenChargeMapPoi = {
   details?: OpenChargeMapDetails;
 };
 
-const VITE_ENV = (import.meta as any)?.env ?? {};
+type EnvLike = Partial<Record<string, string>>;
+const VITE_ENV: EnvLike = (import.meta as ImportMeta & { env?: EnvLike }).env ?? {};
 const OPENCHARGEMAP_API_KEY = VITE_ENV.VITE_OPENCHARGEMAP_API_KEY as string | undefined;
 const OPENCHARGEMAP_PROXY_URL = VITE_ENV.VITE_OPENCHARGEMAP_PROXY_URL as string | undefined;
 
@@ -71,8 +72,11 @@ async function fetchWithRetries(url: string, retries = 1) {
   return null;
 }
 
-function formatOpeningTimes(openingTimes: any): string | undefined {
-  if (!openingTimes || typeof openingTimes !== "object") return undefined;
+type UnknownRecord = Record<string, unknown>;
+const isRecord = (value: unknown): value is UnknownRecord => typeof value === "object" && value !== null;
+
+function formatOpeningTimes(openingTimes: unknown): string | undefined {
+  if (!isRecord(openingTimes)) return undefined;
   if (openingTimes.Is24Hour === true || openingTimes.IsOpen247 === true) return "24/7";
   if (typeof openingTimes.OpeningTimesSummary === "string" && openingTimes.OpeningTimesSummary.trim()) {
     return openingTimes.OpeningTimesSummary.trim();
@@ -84,16 +88,21 @@ function formatOpeningTimes(openingTimes: any): string | undefined {
   return undefined;
 }
 
-export function parseOpenChargeMapDetails(poi: any): OpenChargeMapDetails {
-  const usageTypeTitle = poi?.UsageType?.Title;
+export function parseOpenChargeMapDetails(poi: unknown): OpenChargeMapDetails {
+  const record = isRecord(poi) ? poi : ({} as UnknownRecord);
+  const usageType = isRecord(record.UsageType) ? record.UsageType : undefined;
+  const addressInfo = isRecord(record.AddressInfo) ? record.AddressInfo : undefined;
+  const dataProviderObj = isRecord(record.DataProvider) ? record.DataProvider : undefined;
+
+  const usageTypeTitle = usageType?.Title;
   const isMembershipRequired =
-    typeof poi?.UsageType?.IsMembershipRequired === "boolean" ? poi.UsageType.IsMembershipRequired : undefined;
-  const usageCost = typeof poi?.UsageCost === "string" ? poi.UsageCost : undefined;
-  const accessComments = typeof poi?.GeneralComments === "string" ? poi.GeneralComments : undefined;
-  const openingTimes = formatOpeningTimes(poi?.OpeningTimes);
-  const dataProvider = poi?.DataProvider?.Title;
-  const dataProviderUrl = poi?.DataProvider?.WebsiteURL;
-  const ocmUrl = poi?.AddressInfo?.RelatedURL || poi?.AddressInfo?.ContactEmail || undefined;
+    typeof usageType?.IsMembershipRequired === "boolean" ? usageType.IsMembershipRequired : undefined;
+  const usageCost = typeof record.UsageCost === "string" ? record.UsageCost : undefined;
+  const accessComments = typeof record.GeneralComments === "string" ? record.GeneralComments : undefined;
+  const openingTimes = formatOpeningTimes(record.OpeningTimes);
+  const dataProvider = dataProviderObj?.Title;
+  const dataProviderUrl = dataProviderObj?.WebsiteURL;
+  const ocmUrl = addressInfo?.RelatedURL || addressInfo?.ContactEmail || undefined;
 
   return {
     usageType: typeof usageTypeTitle === "string" ? usageTypeTitle : undefined,
@@ -255,26 +264,31 @@ export async function fetchOpenChargeMapPoisByCountry(countryCode: string): Prom
   if (!Array.isArray(data)) return [];
 
   const items = data
-    .map((poi: any): OpenChargeMapPoi | null => {
-      const id = toNumber(poi?.ID);
-      const name = toNonEmptyString(poi?.AddressInfo?.Title) ?? toNonEmptyString(poi?.AddressInfo?.AddressLine1);
-      const lat = toNumber(poi?.AddressInfo?.Latitude);
-      const lon = toNumber(poi?.AddressInfo?.Longitude);
+    .map((poi: unknown): OpenChargeMapPoi | null => {
+      const p = isRecord(poi) ? poi : ({} as UnknownRecord);
+      const addressInfo = isRecord(p.AddressInfo) ? p.AddressInfo : undefined;
+      const id = toNumber(p.ID);
+      const name =
+        toNonEmptyString(addressInfo?.Title) ?? toNonEmptyString(addressInfo?.AddressLine1);
+      const lat = toNumber(addressInfo?.Latitude);
+      const lon = toNumber(addressInfo?.Longitude);
       if (!id || !name || lat === undefined || lon === undefined) return null;
 
-      const addressLine = toNonEmptyString(poi?.AddressInfo?.AddressLine1);
-      const town = toNonEmptyString(poi?.AddressInfo?.Town);
+      const addressLine = toNonEmptyString(addressInfo?.AddressLine1);
+      const town = toNonEmptyString(addressInfo?.Town);
       const address = [addressLine, town].filter(Boolean).join(", ") || undefined;
 
-      const connectionsRaw: any[] = Array.isArray(poi?.Connections) ? poi.Connections : [];
+      const connectionsRaw: unknown[] = Array.isArray(p.Connections) ? (p.Connections as unknown[]) : [];
       const connections =
         connectionsRaw.length > 0
           ? connectionsRaw
-              .map((c: any) => {
+              .map((c: unknown) => {
+                const conn = isRecord(c) ? c : ({} as UnknownRecord);
+                const connectionTypeObj = isRecord(conn.ConnectionType) ? conn.ConnectionType : undefined;
                 const connectionType =
-                  toNonEmptyString(c?.ConnectionType?.Title) ?? toNonEmptyString(c?.ConnectionType?.FormalName);
-                const powerKw = toNumber(c?.PowerKW);
-                const quantity = toNumber(c?.Quantity);
+                  toNonEmptyString(connectionTypeObj?.Title) ?? toNonEmptyString(connectionTypeObj?.FormalName);
+                const powerKw = toNumber(conn.PowerKW);
+                const quantity = toNumber(conn.Quantity);
                 return {
                   connectionType,
                   powerKw,
