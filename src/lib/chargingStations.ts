@@ -18,6 +18,8 @@ const PLACETOPLUG_GRAPHQL_ENDPOINT =
 export interface ChargingStation {
   id: string;
   name: string;
+  osmName?: string;
+  placeToPlugName?: string;
   operator?: string;
   address?: string;
   city?: string;
@@ -314,6 +316,7 @@ function haversineDistanceKm(from: [number, number], to: [number, number]) {
 }
 
 type ExternalStatus = {
+  source?: "placetoplug" | "cyprus" | "unknown";
   name?: string;
   address?: string;
   power?: string;
@@ -936,6 +939,7 @@ async function fetchPlaceToPlugGraphqlStatusData(): Promise<ExternalStatus[]> {
       const address = [addressStreet, city].filter(Boolean).join(", ") || undefined;
 
       return {
+        source: "placetoplug",
         name,
         address,
         connectors: connectorsFromPorts.length ? connectorsFromPorts : undefined,
@@ -1075,9 +1079,17 @@ export async function fetchChargingStations(): Promise<ChargingStation[]> {
           usedExternalIds.add(coordinateKey(matchedStatus.coordinates[0], matchedStatus.coordinates[1]));
         }
 
+        const osmName = toTitleCase(name);
+        const placeToPlugName =
+          matchedStatus?.source === "placetoplug" && matchedStatus.name
+            ? toTitleCase(matchedStatus.name)
+            : undefined;
+
         return {
           id: `${el.type}/${el.id}`,
-          name: toTitleCase(name),
+          name: osmName,
+          osmName,
+          placeToPlugName: placeToPlugName && placeToPlugName !== osmName ? placeToPlugName : undefined,
           operator: tags.operator || tags.network,
           address: address || matchedStatus?.address || city,
           city,
@@ -1105,9 +1117,12 @@ export async function fetchChargingStations(): Promise<ChargingStation[]> {
     externalStatuses.forEach((status, index) => {
       const coordKey = coordinateKey(status.coordinates[0], status.coordinates[1]);
       if (!usedExternalIds.has(coordKey)) {
+        const externalName = status.name ? toTitleCase(status.name) : "Charging Station";
         stations.push({
           id: `external/${index}`,
-          name: status.name ? toTitleCase(status.name) : "Charging Station",
+          name: externalName,
+          placeToPlugName:
+            status.source === "placetoplug" && status.name ? toTitleCase(status.name) : undefined,
           address: status.address,
           power: status.power,
           connectors: status.connectors,
