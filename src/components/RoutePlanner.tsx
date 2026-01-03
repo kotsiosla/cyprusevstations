@@ -42,7 +42,7 @@ import {
   Map as MapIcon,
   X
 } from "lucide-react";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Popover, PopoverAnchor, PopoverContent } from "@/components/ui/popover";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Collapsible, CollapsibleContent } from "@/components/ui/collapsible";
 import { useIsMobile } from "@/hooks/use-mobile";
@@ -158,18 +158,19 @@ function PlaceAutocomplete({
       <div className="flex gap-2">
         {leadingAction ? <div className="shrink-0">{leadingAction}</div> : null}
         <Popover open={open} onOpenChange={setOpen}>
-          <PopoverTrigger asChild>
+          <PopoverAnchor asChild>
             <Input
               value={query}
               placeholder={placeholder}
               onChange={(e) => {
                 setQuery(e.target.value);
+                if (!open) setOpen(true);
                 // keep current selection until user picks a result or clears
                 if (value) onChange(null);
               }}
               onFocus={() => setOpen(true)}
             />
-          </PopoverTrigger>
+          </PopoverAnchor>
           <PopoverContent
             className="p-0 w-[--radix-popover-trigger-width]"
             align="start"
