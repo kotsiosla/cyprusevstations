@@ -23,6 +23,11 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build
+        env:
+          # NOTE: Using a Vite client env var will embed values in the built JS bundle.
+          # Prefer setting VITE_OPENCHARGEMAP_PROXY_URL to a serverless proxy instead of exposing an API key.
+          VITE_OPENCHARGEMAP_API_KEY: ${{ secrets.VITE_OPENCHARGEMAP_API_KEY }}
+          VITE_OPENCHARGEMAP_PROXY_URL: ${{ secrets.VITE_OPENCHARGEMAP_PROXY_URL }}
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist

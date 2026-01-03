@@ -192,6 +192,35 @@ const ChargingStationList = ({
                 </div>
               </div>
             ) : null}
+
+            {station.ocm ? (
+              <div className="mt-4 grid gap-2">
+                <p className="text-[0.7rem] font-medium text-muted-foreground">Related information</p>
+                <div className="text-xs text-muted-foreground space-y-1">
+                  {(station.ocm.usageType || station.ocm.isMembershipRequired !== undefined) && (
+                    <div>
+                      {station.ocm.usageType ?? "Access"}{" "}
+                      {station.ocm.isMembershipRequired ? "· Membership required" : ""}
+                    </div>
+                  )}
+                  {station.ocm.usageCost && <div>Cost: {station.ocm.usageCost}</div>}
+                  {station.ocm.openingTimes && <div>Opening hours: {station.ocm.openingTimes}</div>}
+                  {station.ocm.accessComments && <div>{station.ocm.accessComments}</div>}
+                  <div>
+                    Data provided by{" "}
+                    <a
+                      href={station.ocm.dataProviderUrl ?? "https://openchargemap.org"}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-primary hover:underline"
+                    >
+                      OpenChargeMap
+                    </a>{" "}
+                    (CC BY 4.0)
+                  </div>
+                </div>
+              </div>
+            ) : null}
           </CardContent>
         </Card>
       ))}
