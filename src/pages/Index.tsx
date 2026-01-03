@@ -475,6 +475,7 @@ const Index = () => {
                   stations={filteredStations}
                   selectedStation={selectedStation}
                   onSelect={setSelectedStation}
+                  userLocation={userLocation}
                 />
               </div>
             </div>

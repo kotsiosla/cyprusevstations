@@ -301,6 +301,28 @@ export default function ChargingStationMap({
         </div>`
       : "";
 
+    const directionsUrl = (() => {
+      const [lon, lat] = selectedStation.coordinates;
+      const params = new URLSearchParams({
+        api: "1",
+        destination: `${lat},${lon}`,
+        travelmode: "driving"
+      });
+      if (userLocation) {
+        params.set("origin", `${userLocation[1]},${userLocation[0]}`);
+      }
+      return `https://www.google.com/maps/dir/?${params.toString()}`;
+    })();
+
+    const directionsHtml = `<div class="text-xs mt-2">
+      <a
+        href="${escapeHtml(directionsUrl)}"
+        target="_blank"
+        rel="noopener noreferrer"
+        style="display:inline-block; padding:6px 10px; border-radius:8px; border:1px solid rgba(148,163,184,0.6); text-decoration:none;"
+      >Directions</a>
+    </div>`;
+
     const ocmHtml = selectedStation.ocm
       ? `<div class="text-xs mt-2">
           <div class="font-medium mb-1">Related information</div>
@@ -347,6 +369,7 @@ export default function ChargingStationMap({
             ? `<div class="text-xs text-muted-foreground">${selectedStation.address}</div>`
             : "") +
           `<div class="text-xs mt-1">${availabilityLabel}</div>` +
+          directionsHtml +
           portsHtml +
           ocmHtml +
           (selectedStation.openingHours
@@ -354,7 +377,7 @@ export default function ChargingStationMap({
             : "")
       )
       .addTo(map);
-  }, [selectedStation, showStations]);
+  }, [selectedStation, showStations, userLocation]);
 
   const handleZoomIn = () => {
     mapRef.current?.zoomIn();

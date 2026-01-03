@@ -1,19 +1,22 @@
 import { ChargingStation } from "@/lib/chargingStations";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { BatteryCharging, MapPin, ArrowRight, Clock, Radar, CircleDot } from "lucide-react";
+import { BatteryCharging, MapPin, ArrowRight, Clock, Radar, CircleDot, Navigation } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
 
 interface ChargingStationListProps {
   stations: ChargingStation[];
   selectedStation?: ChargingStation | null;
   onSelect: (station: ChargingStation) => void;
+  userLocation?: [number, number] | null;
 }
 
 const ChargingStationList = ({
   stations,
   selectedStation,
-  onSelect
+  onSelect,
+  userLocation
 }: ChargingStationListProps) => {
   const availabilityStyles = (availability?: ChargingStation["availability"]) => {
     switch (availability) {
@@ -58,6 +61,19 @@ const ChargingStationList = ({
       default:
         return "Unknown";
     }
+  };
+
+  const directionsUrlForStation = (station: ChargingStation) => {
+    const [lon, lat] = station.coordinates;
+    const params = new URLSearchParams({
+      api: "1",
+      destination: `${lat},${lon}`,
+      travelmode: "driving"
+    });
+    if (userLocation) {
+      params.set("origin", `${userLocation[1]},${userLocation[0]}`);
+    }
+    return `https://www.google.com/maps/dir/?${params.toString()}`;
   };
 
   return (
@@ -149,6 +165,23 @@ const ChargingStationList = ({
                 />
               </div>
             </div>
+
+            <div className="mt-3 flex flex-wrap gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-2"
+                onClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  window.open(directionsUrlForStation(station), "_blank", "noopener,noreferrer");
+                }}
+              >
+                <Navigation className="w-4 h-4" />
+                Directions
+              </Button>
+            </div>
+
             {station.openingHours && (
               <div className="mt-3 flex items-center gap-2 text-xs text-muted-foreground">
                 <Clock className="w-3 h-3" />
