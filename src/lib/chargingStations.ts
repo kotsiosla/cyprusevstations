@@ -7,14 +7,13 @@ const CYPRUS_STATUS_SOURCES = [
   "https://fixcyprus.cy/gnosis/open/api/nap/datasets/electric_vehicle_chargers/",
   "https://traffic4cyprus.org.cy/dataset/electricvehiclecharges/resource/471c1040-cda9-47b8-9b47-2a9065aeddba/download"
 ];
-const PLACETOPLUG_STATUS_SOURCES = [
-  "https://placetoplug.com/api/charging-stations.geojson",
-  "https://placetoplug.com/api/charging-stations"
-];
 
+const VITE_ENV = (import.meta as any)?.env ?? {};
 const PLACETOPLUG_ENDPOINT =
-  import.meta.env.VITE_PLACETOPLUG_ENDPOINT ?? "https://placetoplug.com/api/chargepoints";
-const PLACETOPLUG_API_KEY = import.meta.env.VITE_PLACETOPLUG_API_KEY;
+  VITE_ENV.VITE_PLACETOPLUG_ENDPOINT ?? "https://placetoplug.com/api/chargepoints";
+const PLACETOPLUG_API_KEY = VITE_ENV.VITE_PLACETOPLUG_API_KEY;
+const PLACETOPLUG_GRAPHQL_ENDPOINT =
+  VITE_ENV.VITE_PLACETOPLUG_GRAPHQL_ENDPOINT ?? "https://api.placetoplug.com/v2/graphql";
 
 export interface ChargingStation {
   id: string;
@@ -102,6 +101,10 @@ function normalizeAvailability(value?: string | number | boolean) {
   const normalized = String(value).toLowerCase().trim();
   const ocppAvailability = OCPP_STATUS_MAP[normalized];
   if (ocppAvailability) return ocppAvailability;
+  // PlaceToPlug exposes status enums like OUTOFORDER.
+  if (normalized.includes("outoforder") || normalized.includes("out_of_order")) {
+    return "out_of_service" as const;
+  }
   // Some feeds (e.g. Cyprus DATEX II) report operational state, not live occupancy.
   // Treat these as unknown rather than implying availability.
   if (
@@ -144,6 +147,28 @@ function normalizeAvailability(value?: string | number | boolean) {
   }
   if (["0", "false", "offline", "down"].includes(normalized)) return "out_of_service" as const;
   return "unknown" as const;
+}
+
+function normalizePlaceToPlugLabel(value?: string) {
+  if (!value) return undefined;
+  const normalized = value.toUpperCase().trim();
+  switch (normalized) {
+    case "AVAILABLE":
+      return "Available";
+    case "OCCUPIED":
+      return "Occupied";
+    case "OUTOFORDER":
+    case "OUT_OF_ORDER":
+      return "Out of order";
+    case "OUTOFORDERED":
+      return "Out of order";
+    case "PLANNED":
+      return "Planned";
+    case "UNKNOWN":
+      return "Unknown";
+    default:
+      return undefined;
+  }
 }
 
 function findStatusCandidates(tags: Record<string, string | undefined>) {
@@ -615,9 +640,89 @@ async function fetchPlaceToPlugStatusData(): Promise<ExternalStatus[]> {
     .filter((item): item is ExternalStatus => Boolean(item));
 }
 
+async function fetchPlaceToPlugGraphqlStatusData(): Promise<ExternalStatus[]> {
+  // Public PlaceToPlug web app uses this GraphQL endpoint and returns zone/plug status.
+  // Note: "status" may represent availability only for some networks; treat unknowns cautiously.
+  const query = `
+    query Query($query: FindChargingZone!) {
+      findChargingZones(query: $query) {
+        chargingZones {
+          id
+          name
+          coordinates
+          status
+        }
+      }
+    }
+  `;
+
+  const variables = {
+    query: {
+      // Ask specifically for zones that can provide real-time status when possible.
+      filters: { realTime: true },
+      // Center of Cyprus (lon/lat in app is [33.3823, 35.1856]).
+      params: { location: { latitude: 35.1856, longitude: 33.3823 } },
+      limit: 500,
+      page: 1
+    }
+  };
+
+  const res = await fetchWithRetries(
+    PLACETOPLUG_GRAPHQL_ENDPOINT,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "apollo-require-preflight": "true",
+        platform: "WEB",
+        "Accept-Language": "en"
+      },
+      body: JSON.stringify({ query, variables })
+    },
+    1,
+    800
+  );
+  if (!res) return [];
+
+  try {
+    const payload = await res.json();
+    const zones: any[] = payload?.data?.findChargingZones?.chargingZones ?? [];
+    if (!Array.isArray(zones) || zones.length === 0) return [];
+
+    return zones
+      .map((zone) => {
+        const coords = Array.isArray(zone?.coordinates) ? zone.coordinates : null;
+        if (!coords || coords.length < 2) return null;
+        const lon = Number(coords[0]);
+        const lat = Number(coords[1]);
+        if (!Number.isFinite(lon) || !Number.isFinite(lat)) return null;
+
+        const statusValue = zone?.status;
+        const availability = normalizeAvailability(statusValue);
+        const statusLabel = normalizePlaceToPlugLabel(statusValue) ?? normalizeStatusLabel(statusValue);
+        const name = zone?.name ? String(zone.name) : undefined;
+
+        return {
+          name,
+          statusLabel,
+          availability,
+          coordinates: [lon, lat] as [number, number]
+        } satisfies ExternalStatus;
+      })
+      .filter((item): item is ExternalStatus => Boolean(item));
+  } catch (error) {
+    console.warn("Failed to parse PlaceToPlug GraphQL response:", error);
+    return [];
+  }
+}
+
 async function fetchExternalStatusData(): Promise<ExternalStatus[]> {
-  const placeToPlug = await fetchPlaceToPlugStatusData();
+  const placeToPlug = await fetchPlaceToPlugGraphqlStatusData();
   if (placeToPlug.length) return placeToPlug;
+
+  // Legacy endpoints (may require auth / currently redirect to not-found).
+  const placeToPlugLegacy = await fetchPlaceToPlugStatusData();
+  if (placeToPlugLegacy.length) return placeToPlugLegacy;
 
   const candidateSources = [...CYPRUS_STATUS_SOURCES];
 
