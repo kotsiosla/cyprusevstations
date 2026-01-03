@@ -46,6 +46,7 @@ import { Popover, PopoverAnchor, PopoverContent } from "@/components/ui/popover"
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Collapsible, CollapsibleContent } from "@/components/ui/collapsible";
 import { useIsMobile } from "@/hooks/use-mobile";
+import { toast } from "@/components/ui/sonner";
 
 type RoutePlannerProps = {
   stations: ChargingStation[];
@@ -926,25 +927,24 @@ export default function RoutePlanner({ stations, onApplyToMap, onSelectStation }
               <Button
                 variant="secondary"
                 className="gap-2"
-                onClick={() =>
+                onClick={() => {
                   onApplyToMap?.({
                     templateId: routeMode === "custom" ? "custom" : templateId,
                     polyline: result.polyline,
                     suggestedStopStationIds: result.suggestedStopStationIds
-                  })
-                }
+                  });
+                  toast("Route applied to map", { description: "Scrolling to map…" });
+                  document.querySelector("#map")?.scrollIntoView({ behavior: "smooth", block: "start" });
+                }}
               >
                 Apply to map
               </Button>
               {googleMapsUrl ? (
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="gap-2"
-                  onClick={() => window.open(googleMapsUrl, "_blank", "noopener,noreferrer")}
-                >
-                  <MapIcon className="h-4 w-4" />
-                  Open in Google Maps
+                <Button asChild type="button" variant="outline" className="gap-2">
+                  <a href={googleMapsUrl} target="_blank" rel="noopener noreferrer">
+                    <MapIcon className="h-4 w-4" />
+                    Open in Google Maps
+                  </a>
                 </Button>
               ) : null}
               <Button

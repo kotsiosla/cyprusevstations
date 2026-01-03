@@ -331,6 +331,16 @@ export default function ChargingStationMap({
     const stopsSource = map.getSource("route-stops") as maplibregl.GeoJSONSource | undefined;
     if (stopsSource) stopsSource.setData(routeStopsGeoJson);
 
+    if (routePolyline && routePolyline.length >= 2) {
+      const bounds = new maplibregl.LngLatBounds(routePolyline[0], routePolyline[0]);
+      for (const coord of routePolyline) bounds.extend(coord);
+      map.fitBounds(bounds, {
+        padding: 60,
+        duration: 900,
+        maxZoom: 12.5
+      });
+    }
+
     if (userLocation) {
       if (!userMarkerRef.current) {
         const userMarker = document.createElement("div");
@@ -345,7 +355,7 @@ export default function ChargingStationMap({
       userMarkerRef.current.remove();
       userMarkerRef.current = null;
     }
-  }, [stationGeoJson, userLocation, routeLineGeoJson, routeAnchorsGeoJson, routeStopsGeoJson]);
+  }, [stationGeoJson, userLocation, routeLineGeoJson, routeAnchorsGeoJson, routeStopsGeoJson, routePolyline]);
 
   useEffect(() => {
     const map = mapRef.current;
