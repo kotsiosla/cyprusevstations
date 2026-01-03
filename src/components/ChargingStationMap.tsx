@@ -278,17 +278,53 @@ export default function ChargingStationMap({
               ? "Out of service"
               : "Status unknown";
 
+    const escapeHtml = (value: string) =>
+      value
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#39;");
+
+    const portsHtml = selectedStation.ports?.length
+      ? `<div class="text-xs mt-2">
+          <div class="font-medium mb-1">Ports</div>
+          <div style="display:flex; flex-direction:column; gap:4px;">
+            ${selectedStation.ports
+              .slice(0, 6)
+              .map((port, idx) => {
+                const parts = [
+                  `Port ${idx + 1}`,
+                  port.connectorLabel,
+                  typeof port.powerKw === "number" ? `${port.powerKw} kW` : undefined,
+                  port.availability === "available"
+                    ? "Available"
+                    : port.availability === "occupied"
+                      ? "In use"
+                      : port.availability === "out_of_service"
+                        ? "Out of service"
+                        : "Unknown"
+                ].filter(Boolean);
+                return `<div>${escapeHtml(parts.join(" · "))}</div>`;
+              })
+              .join("")}
+            ${selectedStation.ports.length > 6 ? `<div>+${selectedStation.ports.length - 6} more</div>` : ""}
+          </div>
+        </div>`
+      : "";
+
     popupRef.current?.remove();
     popupRef.current = new maplibregl.Popup({ offset: 20 })
       .setLngLat(selectedStation.coordinates)
       .setHTML(
-        `<div class="text-sm font-semibold">${selectedStation.name}</div>` +
+        `<div class="text-sm font-semibold">${escapeHtml(selectedStation.name)}</div>` +
           (selectedStation.address
             ? `<div class="text-xs text-muted-foreground">${selectedStation.address}</div>`
             : "") +
           `<div class="text-xs mt-1">${availabilityLabel}</div>` +
+          portsHtml +
           (selectedStation.openingHours
-            ? `<div class="text-xs text-muted-foreground">${selectedStation.openingHours}</div>`
+            ? `<div class="text-xs text-muted-foreground">${escapeHtml(selectedStation.openingHours)}</div>`
             : "")
       )
       .addTo(map);
