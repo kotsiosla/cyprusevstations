@@ -1,16 +1,20 @@
 import type { StationSuggestion } from "@/lib/userSuggestions";
 
 type EnvLike = Partial<Record<string, string>>;
+type RuntimeConfig = {
+  adminNotifyEndpoint?: string;
+};
 const VITE_ENV: EnvLike = (import.meta as ImportMeta & { env?: EnvLike }).env ?? {};
+const RUNTIME_CONFIG = (globalThis as typeof globalThis & { __APP_CONFIG__?: RuntimeConfig }).__APP_CONFIG__;
 
 // A public webhook/form endpoint (e.g. Formspree / Getform / Pipedream).
 // It should be configured on the provider to email the admin privately.
-const ADMIN_NOTIFY_ENDPOINT = VITE_ENV.VITE_ADMIN_NOTIFY_ENDPOINT;
+const getAdminNotifyEndpoint = () => VITE_ENV.VITE_ADMIN_NOTIFY_ENDPOINT ?? RUNTIME_CONFIG?.adminNotifyEndpoint;
 
 export type AdminNotifyResult = { ok: boolean; reason?: string };
 
 export function isAdminNotifyConfigured(): boolean {
-  return Boolean(ADMIN_NOTIFY_ENDPOINT);
+  return Boolean(getAdminNotifyEndpoint());
 }
 
 async function postJson(endpoint: string, body: unknown) {
@@ -40,7 +44,8 @@ export async function notifyAdminNewSuggestion(args: {
   approvalUrl: string;
   suggestion: StationSuggestion;
 }): Promise<AdminNotifyResult> {
-  if (!ADMIN_NOTIFY_ENDPOINT) {
+  const adminNotifyEndpoint = getAdminNotifyEndpoint();
+  if (!adminNotifyEndpoint) {
     return { ok: false, reason: "admin_notify_endpoint_not_configured" };
   }
 
@@ -79,12 +84,12 @@ export async function notifyAdminNewSuggestion(args: {
   };
 
   try {
-    const res = await postJson(ADMIN_NOTIFY_ENDPOINT, body);
+    const res = await postJson(adminNotifyEndpoint, body);
     if (res.ok) return { ok: true };
 
     // Some form providers only accept form-encoded payloads.
     if (res.status === 400 || res.status === 401 || res.status === 403 || res.status === 404 || res.status === 405 || res.status === 415) {
-      const formRes = await postForm(ADMIN_NOTIFY_ENDPOINT, Object.fromEntries(
+      const formRes = await postForm(adminNotifyEndpoint, Object.fromEntries(
         Object.entries(body).map(([k, v]) => [k, typeof v === "string" ? v : String(v)])
       ));
       if (formRes.ok) return { ok: true };
@@ -96,7 +101,7 @@ export async function notifyAdminNewSuggestion(args: {
     // Last resort: attempt a simple "no-cors" POST. This can still deliver data to some webhook providers,
     // but the browser will hide the response (opaque) so we cannot verify delivery.
     try {
-      await fetch(ADMIN_NOTIFY_ENDPOINT, {
+      await fetch(adminNotifyEndpoint, {
         method: "POST",
         mode: "no-cors",
         headers: {
@@ -111,4 +116,3 @@ export async function notifyAdminNewSuggestion(args: {
     }
   }
 }
-
