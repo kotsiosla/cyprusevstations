@@ -558,30 +558,6 @@ export default function RoutePlanner({ stations, onApplyToMap, onSelectStation }
     return `https://www.google.com/maps/dir/${segments.join("/")}`;
   }, [routeMode, origin, destination, stops, template]);
 
-  const openStreetMapUrl = useMemo(() => {
-    const toLatLon = (p: PlaceValue) => (p ? `${p.coordinates[1]},${p.coordinates[0]}` : null);
-    const toLatLonFromCoord = (c: [number, number]) => `${c[1]},${c[0]}`;
-
-    const originStr = routeMode === "custom" ? toLatLon(origin) : toLatLonFromCoord(template.start.coordinates);
-    const destStr = routeMode === "custom" ? toLatLon(destination) : toLatLonFromCoord(template.end.coordinates);
-    if (!originStr || !destStr) return null;
-
-    const via = routeMode === "custom"
-      ? (stops.map((s) => s.place).filter(Boolean) as Array<NonNullable<PlaceValue>>)
-          .slice(0, 8)
-          .map((p) => toLatLon(p))
-          .filter((x): x is string => Boolean(x))
-      : template.polyline.slice(1, -1).slice(0, 3).map(toLatLonFromCoord);
-
-    // OSM directions expects route as "lat,lon;lat,lon;..."
-    const route = [originStr, ...via, destStr].join(";");
-    const params = new URLSearchParams({
-      engine: "fossgis_osrm_car",
-      route
-    });
-    return `https://www.openstreetmap.org/directions?${params.toString()}`;
-  }, [routeMode, origin, destination, stops, template]);
-
   const handleDragEnd = (event: DragEndEvent) => {
     const { active, over } = event;
     if (!over) return;
@@ -963,23 +939,15 @@ export default function RoutePlanner({ stations, onApplyToMap, onSelectStation }
               {googleMapsUrl ? (
                 <a
                   href={googleMapsUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
+                  // Same-tab navigation is more reliable on desktop browsers that block new tabs/windows.
+                  onClick={() => {
+                    // Best-effort: some environments swallow default navigation; force it.
+                    window.location.assign(googleMapsUrl);
+                  }}
                   className={cn(buttonVariants({ variant: "outline", size: "default" }), "gap-2")}
                 >
                   <MapIcon className="h-4 w-4" />
                   Google Maps
-                </a>
-              ) : null}
-              {openStreetMapUrl ? (
-                <a
-                  href={openStreetMapUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className={cn(buttonVariants({ variant: "outline", size: "default" }), "gap-2")}
-                >
-                  <MapIcon className="h-4 w-4" />
-                  OpenStreetMap
                 </a>
               ) : null}
               <Button
