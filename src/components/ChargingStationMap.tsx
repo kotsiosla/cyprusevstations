@@ -17,21 +17,9 @@ const defaultView = {
   zoom: 8.2
 };
 
-const mapStyle = {
-  version: 8 as const,
-  sources: {
-    esri: {
-      type: "raster" as const,
-      tiles: [
-        "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
-      ],
-      tileSize: 256,
-      attribution:
-        "Tiles © Esri — Source: Esri, Maxar, Earthstar Geographics, and the GIS User Community"
-    }
-  },
-  layers: [{ id: "esri-satellite", type: "raster" as const, source: "esri" }]
-};
+// OpenChargeMap uses an OpenFreeMap basemap (OpenMapTiles + OpenStreetMap).
+// This keeps our map consistent with the OpenChargeMap look & attribution.
+const mapStyleUrl = "https://tiles.openfreemap.org/styles/liberty";
 
 const stationLayerIds = ["clusters", "cluster-count", "unclustered-point", "selected-station"] as const;
 
@@ -82,7 +70,7 @@ export default function ChargingStationMap({
 
     const map = new maplibregl.Map({
       container: mapContainerRef.current,
-      style: mapStyle,
+      style: mapStyleUrl,
       center: defaultView.center,
       zoom: defaultView.zoom
     });
