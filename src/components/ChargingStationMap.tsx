@@ -268,13 +268,15 @@ export default function ChargingStationMap({
     }
 
     const availabilityLabel =
-      selectedStation.availability === "available"
-        ? "Available"
-        : selectedStation.availability === "occupied"
-          ? "Occupied"
-          : selectedStation.availability === "out_of_service"
-            ? "Out of service"
-            : selectedStation.statusLabel || "Status unknown";
+      selectedStation.statusLabel && selectedStation.statusLabel !== "Status unknown"
+        ? selectedStation.statusLabel
+        : selectedStation.availability === "available"
+          ? "Available"
+          : selectedStation.availability === "occupied"
+            ? "Occupied"
+            : selectedStation.availability === "out_of_service"
+              ? "Out of service"
+              : "Status unknown";
 
     popupRef.current?.remove();
     popupRef.current = new maplibregl.Popup({ offset: 20 })

@@ -705,6 +705,8 @@ export async function fetchChargingStations(): Promise<ChargingStation[]> {
         const city = tags["addr:city"] || tags["addr:suburb"] || tags["addr:place"];
         const address = buildAddress(tags);
         const opening = tags.opening_hours;
+        const osmAvailability = deriveAvailability(tags);
+        const osmStatusLabel = deriveStatusLabel(tags);
         const coordKey = coordinateKey(lon, lat);
         const nameKey = name?.toLowerCase();
         let matchedStatus =
@@ -737,8 +739,11 @@ export async function fetchChargingStations(): Promise<ChargingStation[]> {
           access: tags.access,
           open24_7: opening?.includes("24/7"),
           openingHours: opening,
-          availability: matchedStatus?.availability ?? "unknown",
-          statusLabel: matchedStatus?.statusLabel,
+          availability:
+            matchedStatus?.availability && matchedStatus.availability !== "unknown"
+              ? matchedStatus.availability
+              : osmAvailability,
+          statusLabel: matchedStatus?.statusLabel ?? osmStatusLabel,
           coordinates: [lon, lat]
         } as ChargingStation;
       })
