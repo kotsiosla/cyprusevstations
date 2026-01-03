@@ -7,6 +7,7 @@ import type { FeatureCollection, Feature, LineString, Point } from "geojson";
 import { Input } from "@/components/ui/input";
 import SuggestStationDialog from "@/components/SuggestStationDialog";
 import { toast } from "@/components/ui/sonner";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 interface ChargingStationMapProps {
   stations: ChargingStation[];
@@ -775,7 +776,7 @@ export default function ChargingStationMap({
       setSuggestCoords(null);
     }
     setSuggestOpen(true);
-    toast.message("Pick location", { description: "Click on the map to set the new station location." });
+    toast.message("Place the pin", { description: "Drag the purple pin (or tap the map) to set the exact location." });
   };
 
   useEffect(() => {
@@ -786,105 +787,199 @@ export default function ChargingStationMap({
       suggestMarkerRef.current = null;
       return;
     }
+    const initial: [number, number] = suggestCoords ?? (() => {
+      const c = map.getCenter();
+      return [c.lng, c.lat];
+    })();
+    if (!suggestCoords) setSuggestCoords(initial);
+
+    if (!suggestMarkerRef.current) {
+      const el = document.createElement("div");
+      el.style.width = "14px";
+      el.style.height = "14px";
+      el.style.borderRadius = "999px";
+      el.style.background = "#a855f7";
+      el.style.border = "2px solid #f8fafc";
+      el.style.boxShadow = "0 8px 20px rgba(0,0,0,.25)";
+      el.style.cursor = "grab";
+      suggestMarkerRef.current = new maplibregl.Marker({ element: el, draggable: true }).setLngLat(initial).addTo(map);
+    } else {
+      suggestMarkerRef.current.setLngLat(initial);
+    }
+
+    const marker = suggestMarkerRef.current;
+    const onDragEnd = () => {
+      const p = marker.getLngLat();
+      setSuggestCoords([p.lng, p.lat]);
+    };
+    marker.on("dragend", onDragEnd);
+
     const onClick = (e: maplibregl.MapMouseEvent & maplibregl.EventData) => {
       const coords: [number, number] = [e.lngLat.lng, e.lngLat.lat];
       setSuggestCoords(coords);
-      if (!suggestMarkerRef.current) {
-        const el = document.createElement("div");
-        el.style.width = "14px";
-        el.style.height = "14px";
-        el.style.borderRadius = "999px";
-        el.style.background = "#a855f7";
-        el.style.border = "2px solid #f8fafc";
-        el.style.boxShadow = "0 8px 20px rgba(0,0,0,.25)";
-        suggestMarkerRef.current = new maplibregl.Marker({ element: el }).setLngLat(coords).addTo(map);
-      } else {
-        suggestMarkerRef.current.setLngLat(coords);
-      }
+      marker.setLngLat(coords);
     };
     map.on("click", onClick);
     return () => {
       map.off("click", onClick);
+      marker.off("dragend", onDragEnd);
     };
-  }, [suggestOpen]);
+  }, [suggestOpen, suggestCoords]);
+
+  useEffect(() => {
+    const marker = suggestMarkerRef.current;
+    if (!suggestOpen || !marker || !suggestCoords) return;
+    marker.setLngLat(suggestCoords);
+  }, [suggestCoords, suggestOpen]);
 
   return (
     <div className="relative w-full h-full">
       <div ref={mapContainerRef} className="absolute inset-0" />
 
       <div className="absolute top-4 right-4 z-10 flex flex-col gap-2">
-        <button
-          type="button"
-          onClick={() => setSearchOpen((prev) => !prev)}
-          className="rounded-full border bg-background/90 p-2 shadow-soft backdrop-blur transition hover:bg-background"
-          aria-label={searchOpen ? "Close search" : "Find a charging station"}
-        >
-          {searchOpen ? <X className="h-4 w-4" /> : <Search className="h-4 w-4" />}
-        </button>
-        <button
-          type="button"
-          onClick={() => setShowStations((prev) => !prev)}
-          className="rounded-full border bg-background/90 p-2 shadow-soft backdrop-blur transition hover:bg-background"
-          aria-label={showStations ? "Hide stations" : "Show stations"}
-        >
-          <SlidersHorizontal className="h-4 w-4" />
-        </button>
-        <button
-          type="button"
-          onClick={() => setShowUserStations((prev) => !prev)}
-          className="rounded-full border bg-background/90 p-2 shadow-soft backdrop-blur transition hover:bg-background"
-          aria-label={showUserStations ? "Hide user-submitted stations" : "Show user-submitted stations"}
-        >
-          <Users className="h-4 w-4" />
-        </button>
-        <button
-          type="button"
-          onClick={handleOpenSuggest}
-          className="rounded-full border bg-background/90 p-2 shadow-soft backdrop-blur transition hover:bg-background"
-          aria-label="Suggest a new charging station"
-        >
-          <MapPinPlus className="h-4 w-4" />
-        </button>
-        <button
-          type="button"
-          onClick={handleShareApp}
-          className="rounded-full border bg-background/90 p-2 shadow-soft backdrop-blur transition hover:bg-background"
-          aria-label="Share this app"
-        >
-          <Share2 className="h-4 w-4" />
-        </button>
-        <button
-          type="button"
-          onClick={handleLocate}
-          className="rounded-full border bg-background/90 p-2 shadow-soft backdrop-blur transition hover:bg-background"
-          aria-label="Center on my location"
-        >
-          <Crosshair className="h-4 w-4" />
-        </button>
-        <button
-          type="button"
-          onClick={handleResetView}
-          className="rounded-full border bg-background/90 p-2 shadow-soft backdrop-blur transition hover:bg-background"
-          aria-label="Reset map view"
-        >
-          <Home className="h-4 w-4" />
-        </button>
-        <button
-          type="button"
-          onClick={handleZoomIn}
-          className="rounded-full border bg-background/90 p-2 shadow-soft backdrop-blur transition hover:bg-background"
-          aria-label="Zoom in"
-        >
-          <ZoomIn className="h-4 w-4" />
-        </button>
-        <button
-          type="button"
-          onClick={handleZoomOut}
-          className="rounded-full border bg-background/90 p-2 shadow-soft backdrop-blur transition hover:bg-background"
-          aria-label="Zoom out"
-        >
-          <ZoomOut className="h-4 w-4" />
-        </button>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              onClick={() => setSearchOpen((prev) => !prev)}
+              className="rounded-full border bg-background/90 p-2 shadow-soft backdrop-blur transition hover:bg-background"
+              aria-label={searchOpen ? "Close search" : "Find a charging station"}
+            >
+              {searchOpen ? <X className="h-4 w-4" /> : <Search className="h-4 w-4" />}
+            </button>
+          </TooltipTrigger>
+          <TooltipContent side="left" sideOffset={10}>
+            <span className="text-xs">{searchOpen ? "Close search" : "Find a charger"}</span>
+          </TooltipContent>
+        </Tooltip>
+
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              onClick={() => setShowStations((prev) => !prev)}
+              className="rounded-full border bg-background/90 p-2 shadow-soft backdrop-blur transition hover:bg-background"
+              aria-label={showStations ? "Hide stations" : "Show stations"}
+            >
+              <SlidersHorizontal className="h-4 w-4" />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent side="left" sideOffset={10}>
+            <span className="text-xs">{showStations ? "Hide stations" : "Show stations"}</span>
+          </TooltipContent>
+        </Tooltip>
+
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              onClick={() => setShowUserStations((prev) => !prev)}
+              className="rounded-full border bg-background/90 p-2 shadow-soft backdrop-blur transition hover:bg-background"
+              aria-label={showUserStations ? "Hide user-submitted stations" : "Show user-submitted stations"}
+            >
+              <Users className="h-4 w-4" />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent side="left" sideOffset={10}>
+            <span className="text-xs">{showUserStations ? "Hide user stations" : "Show user stations"}</span>
+          </TooltipContent>
+        </Tooltip>
+
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              onClick={handleOpenSuggest}
+              className="rounded-full border bg-background/90 p-2 shadow-soft backdrop-blur transition hover:bg-background"
+              aria-label="Suggest a new charging station"
+            >
+              <MapPinPlus className="h-4 w-4" />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent side="left" sideOffset={10}>
+            <span className="text-xs">Suggest a station</span>
+          </TooltipContent>
+        </Tooltip>
+
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              onClick={handleShareApp}
+              className="rounded-full border bg-background/90 p-2 shadow-soft backdrop-blur transition hover:bg-background"
+              aria-label="Share this app"
+            >
+              <Share2 className="h-4 w-4" />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent side="left" sideOffset={10}>
+            <span className="text-xs">Share app</span>
+          </TooltipContent>
+        </Tooltip>
+
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              onClick={handleLocate}
+              className="rounded-full border bg-background/90 p-2 shadow-soft backdrop-blur transition hover:bg-background"
+              aria-label="Center on my location"
+            >
+              <Crosshair className="h-4 w-4" />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent side="left" sideOffset={10}>
+            <span className="text-xs">My location</span>
+          </TooltipContent>
+        </Tooltip>
+
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              onClick={handleResetView}
+              className="rounded-full border bg-background/90 p-2 shadow-soft backdrop-blur transition hover:bg-background"
+              aria-label="Reset map view"
+            >
+              <Home className="h-4 w-4" />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent side="left" sideOffset={10}>
+            <span className="text-xs">Reset view</span>
+          </TooltipContent>
+        </Tooltip>
+
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              onClick={handleZoomIn}
+              className="rounded-full border bg-background/90 p-2 shadow-soft backdrop-blur transition hover:bg-background"
+              aria-label="Zoom in"
+            >
+              <ZoomIn className="h-4 w-4" />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent side="left" sideOffset={10}>
+            <span className="text-xs">Zoom in</span>
+          </TooltipContent>
+        </Tooltip>
+
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              onClick={handleZoomOut}
+              className="rounded-full border bg-background/90 p-2 shadow-soft backdrop-blur transition hover:bg-background"
+              aria-label="Zoom out"
+            >
+              <ZoomOut className="h-4 w-4" />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent side="left" sideOffset={10}>
+            <span className="text-xs">Zoom out</span>
+          </TooltipContent>
+        </Tooltip>
       </div>
 
       {searchOpen ? (
