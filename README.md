@@ -74,6 +74,10 @@ This app is deployed as a static site (GitHub Pages), so it cannot send email by
 
 When configured, user submissions will POST to that endpoint and your email will include an **admin approval link**. Opening the link as admin adds the station to the map as **User suggested (unverified)**.
 
+Notes:
+
+- If you are testing on a non-GitHub-Pages deployment (e.g. `*.lovable.app`), GitHub Actions secrets are **not** injected there. You must set `VITE_ADMIN_NOTIFY_ENDPOINT` in that platform’s environment/config and redeploy.
+
 ## Can I connect a custom domain to my Lovable project?
 
 Yes, you can!
