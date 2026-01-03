@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState } from "react";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -7,7 +6,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { toast } from "@/components/ui/sonner";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { useIsMobile } from "@/hooks/use-mobile";
-import { ChevronDown } from "lucide-react";
+import { ChevronDown, X } from "lucide-react";
 import type { SuggestedConnector, StationSuggestion } from "@/lib/userSuggestions";
 import { addPendingSuggestion, makeSuggestionApprovalUrl } from "@/lib/userSuggestions";
 import { notifyAdminNewSuggestion } from "@/lib/adminNotify";
@@ -44,6 +43,15 @@ export default function SuggestStationDialog({ open, onOpenChange, coordinates }
   useEffect(() => {
     if (open) setDetailsOpen(!isMobile);
   }, [open, isMobile]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onOpenChange(false);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [open, onOpenChange]);
 
   const coordsLabel = useMemo(() => {
     if (!coordinates) return null;
@@ -115,19 +123,36 @@ export default function SuggestStationDialog({ open, onOpenChange, coordinates }
     onOpenChange(false);
   };
 
-  return (
-    <Dialog open={open} onOpenChange={(v) => {
-      onOpenChange(v);
-      if (!v) reset();
-    }}>
-      <DialogContent className="sm:max-w-lg max-h-[85vh] overflow-y-auto p-4 sm:p-6">
-        <DialogHeader>
-          <DialogTitle>Suggest a new charging station</DialogTitle>
-          <DialogDescription className="text-xs">
-            Your suggestion will be reviewed by the admin before it appears on the map.
-          </DialogDescription>
-        </DialogHeader>
+  if (!open) return null;
 
+  return (
+    <div
+      role="dialog"
+      aria-modal="false"
+      className={[
+        "absolute z-20 rounded-xl border bg-background/95 backdrop-blur shadow-soft pointer-events-auto",
+        isMobile ? "left-3 right-3 bottom-3 max-h-[55vh]" : "left-4 top-4 w-[380px] max-h-[70vh]"
+      ].join(" ")}
+    >
+      <div className="flex items-start justify-between gap-3 px-4 pt-4">
+        <div className="min-w-0">
+          <div className="text-base font-semibold">Suggest a new charging station</div>
+          <div className="text-xs text-muted-foreground">Reviewed by admin before appearing on the map.</div>
+        </div>
+        <button
+          type="button"
+          className="rounded-md p-2 hover:bg-muted"
+          aria-label="Close"
+          onClick={() => {
+            reset();
+            onOpenChange(false);
+          }}
+        >
+          <X className="h-4 w-4" />
+        </button>
+      </div>
+
+      <div className="px-4 pb-4 pt-3 overflow-y-auto">
         <div className="space-y-3">
           <div className="rounded-lg border bg-muted/20 px-3 py-2 text-xs text-muted-foreground flex items-center justify-between gap-2">
             <div className="font-medium text-foreground">Location</div>
@@ -224,18 +249,25 @@ export default function SuggestStationDialog({ open, onOpenChange, coordinates }
               </div>
             </CollapsibleContent>
           </Collapsible>
-        </div>
 
-        <DialogFooter className="gap-2 sm:justify-end pt-2">
-          <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
-            Cancel
-          </Button>
-          <Button type="button" onClick={handleSubmit} disabled={busy}>
-            Submit suggestion
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+          <div className="flex items-center justify-end gap-2 pt-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                reset();
+                onOpenChange(false);
+              }}
+            >
+              Cancel
+            </Button>
+            <Button type="button" onClick={handleSubmit} disabled={busy}>
+              Submit
+            </Button>
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }
 
