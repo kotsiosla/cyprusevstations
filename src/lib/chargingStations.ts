@@ -1,3 +1,5 @@
+import { fetchOpenChargeMapPoisByCountry, parseOpenChargeMapDetails } from "@/lib/openChargeMap";
+
 const OVERPASS_MIRRORS = [
   "https://overpass-api.de/api/interpreter",
   "https://overpass.kumi.systems/api/interpreter",
@@ -20,6 +22,8 @@ export interface ChargingStation {
   name: string;
   osmName?: string;
   placeToPlugName?: string;
+  ocmName?: string;
+  ocmId?: number;
   ocm?: {
     usageType?: string;
     isMembershipRequired?: boolean;
@@ -322,6 +326,111 @@ function haversineDistanceKm(from: [number, number], to: [number, number]) {
     Math.cos(toRad(fromLat)) * Math.cos(toRad(toLat)) * Math.sin(dLng / 2) ** 2;
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   return earthRadiusKm * c;
+}
+
+function mergeUniqueStrings(values: Array<string | undefined | null>) {
+  return Array.from(new Set(values.map((v) => (v ?? "").trim()).filter(Boolean)));
+}
+
+function mergeStationsPreferBase(base: ChargingStation, incoming: Partial<ChargingStation>): ChargingStation {
+  const merged: ChargingStation = {
+    ...base,
+    ...incoming
+  } as ChargingStation;
+
+  // Merge multi-value fields.
+  merged.connectors = mergeUniqueStrings([...(base.connectors ?? []), ...(incoming.connectors ?? [])]);
+  if (!merged.connectors.length) merged.connectors = undefined;
+
+  // Prefer richer "name" if base is generic.
+  const genericNames = new Set(["charging station", "ev charging", "ev charger"]);
+  const baseNameLower = (base.name ?? "").toLowerCase();
+  if (genericNames.has(baseNameLower) && incoming.name) merged.name = incoming.name;
+
+  merged.osmName = base.osmName ?? incoming.osmName;
+  merged.placeToPlugName = base.placeToPlugName ?? incoming.placeToPlugName;
+  merged.ocmName = base.ocmName ?? incoming.ocmName;
+  merged.ocmId = base.ocmId ?? incoming.ocmId;
+
+  merged.operator = base.operator ?? incoming.operator;
+  merged.address = base.address ?? incoming.address;
+  merged.city = base.city ?? incoming.city;
+  merged.power = base.power ?? incoming.power;
+  merged.capacity = base.capacity ?? incoming.capacity;
+  merged.openingHours = base.openingHours ?? incoming.openingHours;
+  merged.open24_7 = base.open24_7 ?? incoming.open24_7;
+  merged.access = base.access ?? incoming.access;
+
+  // Prefer more specific availability/status.
+  if (base.availability === "unknown" && incoming.availability) merged.availability = incoming.availability;
+  if ((!base.statusLabel || base.statusLabel === "Status unknown") && incoming.statusLabel) {
+    merged.statusLabel = incoming.statusLabel;
+  }
+
+  // Merge ports when present (prefer the one with more ports).
+  const basePorts = base.ports ?? [];
+  const incPorts = incoming.ports ?? [];
+  merged.ports = basePorts.length >= incPorts.length ? base.ports : incoming.ports;
+
+  // Merge OCM details (prefer existing; otherwise take incoming).
+  merged.ocm = base.ocm ?? incoming.ocm;
+
+  return merged;
+}
+
+function dedupeStationsByProximity(stations: ChargingStation[], maxDistanceKm = 0.05) {
+  // Spatial bucket (approx 0.001° ~ 111m) to limit comparisons.
+  const buckets = new Map<string, ChargingStation[]>();
+
+  const bucketKey = (coord: [number, number]) => coordinateKey(coord[0], coord[1], 3);
+
+  const score = (s: ChargingStation) =>
+    (s.ports?.length ?? 0) * 5 +
+    (s.connectors?.length ?? 0) * 2 +
+    (s.ocmId ? 2 : 0) +
+    (s.placeToPlugName ? 2 : 0) +
+    (s.osmName ? 1 : 0) +
+    (s.address ? 1 : 0) +
+    (s.power ? 1 : 0);
+
+  const kept: ChargingStation[] = [];
+
+  for (const station of stations) {
+    const key = bucketKey(station.coordinates);
+    const candidates = buckets.get(key) ?? [];
+
+    let mergedInto: ChargingStation | null = null;
+    for (const existing of candidates) {
+      const distance = haversineDistanceKm(existing.coordinates, station.coordinates);
+      if (distance <= maxDistanceKm) {
+        // Merge into the higher-scored station to reduce flicker.
+        const keepExisting = score(existing) >= score(station);
+        const target = keepExisting ? existing : station;
+        const source = keepExisting ? station : existing;
+        const merged = mergeStationsPreferBase(target, source);
+        // Mutate in-place when target is existing.
+        if (keepExisting) {
+          Object.assign(existing, merged);
+          mergedInto = existing;
+        } else {
+          // Replace existing with merged station.
+          Object.assign(station, merged);
+          Object.assign(existing, merged);
+          mergedInto = existing;
+        }
+        break;
+      }
+    }
+
+    if (mergedInto) continue;
+
+    kept.push(station);
+    const list = buckets.get(key) ?? [];
+    list.push(station);
+    buckets.set(key, list);
+  }
+
+  return kept;
 }
 
 type ExternalStatus = {
@@ -1051,8 +1160,8 @@ export async function fetchChargingStations(): Promise<ChargingStation[]> {
       }
     });
     
-    // Increase matching distance to 500m for better matching
-    const maxStatusDistanceKm = 0.5;
+    // Keep matching distance modest to avoid incorrect merges.
+    const maxStatusDistanceKm = 0.2;
 
     const stations: ChargingStation[] = elements
       .map((el: any) => {
@@ -1076,6 +1185,8 @@ export async function fetchChargingStations(): Promise<ChargingStation[]> {
         if (!matchedStatus && externalStatuses.length) {
           let closestDistance = Number.POSITIVE_INFINITY;
           for (const status of externalStatuses) {
+            const statusCoordKey = coordinateKey(status.coordinates[0], status.coordinates[1]);
+            if (usedExternalIds.has(statusCoordKey)) continue;
             const distance = haversineDistanceKm([lon, lat], status.coordinates);
             if (distance < maxStatusDistanceKm && distance < closestDistance) {
               closestDistance = distance;
@@ -1148,7 +1259,62 @@ export async function fetchChargingStations(): Promise<ChargingStation[]> {
       console.log(`Added ${addedFromExternal} stations from external API with live status`);
     }
 
-    return stations;
+    // Merge in OpenChargeMap locations (deduped by proximity) when an API key/proxy is configured.
+    try {
+      const ocmPois = await fetchOpenChargeMapPoisByCountry("CY");
+      const maxOcmMergeDistanceKm = 0.15;
+
+      const usedOcmIds = new Set<number>();
+      for (const poi of ocmPois) {
+        if (usedOcmIds.has(poi.id)) continue;
+        let bestIdx = -1;
+        let bestDist = Number.POSITIVE_INFINITY;
+        for (let i = 0; i < stations.length; i += 1) {
+          const dist = haversineDistanceKm(stations[i].coordinates, poi.coordinates);
+          if (dist < maxOcmMergeDistanceKm && dist < bestDist) {
+            bestDist = dist;
+            bestIdx = i;
+          }
+        }
+
+        const connectionTypes = poi.connections?.map((c) => c.connectionType).filter(Boolean) ?? [];
+        const powerValues = poi.connections
+          ?.map((c) => c.powerKw)
+          .filter((v): v is number => typeof v === "number" && Number.isFinite(v)) ?? [];
+        const maxPower = powerValues.length ? Math.max(...powerValues) : undefined;
+
+        if (bestIdx >= 0) {
+          stations[bestIdx] = mergeStationsPreferBase(stations[bestIdx], {
+            ocmId: poi.id,
+            ocmName: poi.name,
+            connectors: mergeUniqueStrings(connectionTypes),
+            power: maxPower ? `${maxPower} kW` : undefined,
+            ocm: poi.details ?? undefined
+          });
+        } else {
+          stations.push({
+            id: `ocm/${poi.id}`,
+            name: poi.name,
+            ocmName: poi.name,
+            ocmId: poi.id,
+            address: poi.address,
+            city: poi.city,
+            connectors: mergeUniqueStrings(connectionTypes),
+            power: maxPower ? `${maxPower} kW` : undefined,
+            availability: "unknown",
+            statusLabel: "Status unknown",
+            ocm: poi.details ?? undefined,
+            coordinates: poi.coordinates
+          });
+        }
+        usedOcmIds.add(poi.id);
+      }
+    } catch (e) {
+      console.warn("Failed to merge OpenChargeMap locations:", e);
+    }
+
+    // Final pass: dedupe stations that end up co-located.
+    return dedupeStationsByProximity(stations, 0.05);
   } catch (error) {
     console.error("Error fetching charging stations:", error);
     return [];
