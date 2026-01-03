@@ -47,6 +47,19 @@ const ChargingStationList = ({
     }
   };
 
+  const portStatusLabel = (availability?: ChargingStation["availability"]) => {
+    switch (availability) {
+      case "available":
+        return "Available";
+      case "occupied":
+        return "In use";
+      case "out_of_service":
+        return "Out of service";
+      default:
+        return "Unknown";
+    }
+  };
+
   return (
     <div className="space-y-3">
       {stations.map((station, index) => (
@@ -135,6 +148,42 @@ const ChargingStationList = ({
                 <span className="truncate">{station.address}</span>
               </div>
             )}
+
+            {station.ports?.length ? (
+              <div className="mt-3 grid gap-1">
+                <p className="text-[0.7rem] font-medium text-muted-foreground">Ports</p>
+                <div className="flex flex-col gap-1">
+                  {station.ports.slice(0, 6).map((port, idx) => (
+                    <div key={port.id} className="flex flex-wrap items-center gap-2 text-xs">
+                      <Badge variant="secondary" className="text-[0.65rem]">
+                        Port {idx + 1}
+                      </Badge>
+                      {port.connectorLabel && (
+                        <Badge variant="outline" className="text-[0.65rem]">
+                          {port.connectorLabel}
+                        </Badge>
+                      )}
+                      {typeof port.powerKw === "number" && (
+                        <Badge variant="outline" className="text-[0.65rem]">
+                          {port.powerKw} kW
+                        </Badge>
+                      )}
+                      <Badge
+                        variant="outline"
+                        className={cn("text-[0.65rem]", availabilityStyles(port.availability))}
+                      >
+                        {portStatusLabel(port.availability)}
+                      </Badge>
+                    </div>
+                  ))}
+                  {station.ports.length > 6 && (
+                    <p className="text-[0.7rem] text-muted-foreground">
+                      +{station.ports.length - 6} more
+                    </p>
+                  )}
+                </div>
+              </div>
+            ) : null}
           </CardContent>
         </Card>
       ))}

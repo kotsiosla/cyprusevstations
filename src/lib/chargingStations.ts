@@ -24,6 +24,14 @@ export interface ChargingStation {
   connectors?: string[];
   power?: string;
   capacity?: string;
+  ports?: Array<{
+    id: string;
+    status?: string;
+    availability?: "available" | "occupied" | "out_of_service" | "unknown";
+    powerKw?: number;
+    plugType?: string;
+    connectorLabel?: string;
+  }>;
   access?: string;
   open24_7?: boolean;
   openingHours?: string;
@@ -74,6 +82,27 @@ function parseConnectors(tags: Record<string, string | undefined>) {
   return Object.entries(connectorMap)
     .filter(([key]) => tags[key] && tags[key] !== "no")
     .map(([, label]) => label);
+}
+
+function formatPlaceToPlugPlugType(value?: string) {
+  if (!value) return undefined;
+  const normalized = value.toUpperCase().trim();
+  const map: Record<string, string> = {
+    IEC_62196_T2: "Type 2",
+    IEC_62196_T2_COMBO: "CCS",
+    IEC_62196_T2_COMBO_2: "CCS",
+    CCS: "CCS",
+    CHADEMO: "CHAdeMO",
+    IEC_62196_T1: "Type 1",
+    SCHUKO: "Schuko"
+  };
+  return map[normalized] ?? normalized.replaceAll("_", " ");
+}
+
+function formatPowerKw(value?: unknown) {
+  const numberValue = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(numberValue) || numberValue <= 0) return undefined;
+  return numberValue;
 }
 
 // OCPP status mapping:
@@ -283,6 +312,8 @@ type ExternalStatus = {
   power?: string;
   statusLabel?: string;
   availability?: ChargingStation["availability"];
+  connectors?: string[];
+  ports?: ChargingStation["ports"];
   coordinates: [number, number];
 };
 
@@ -690,6 +721,9 @@ async function fetchPlaceToPlugGraphqlStatusData(): Promise<ExternalStatus[]> {
             services {
               plugs {
                 status
+                power
+                plugType
+                id
               }
             }
           }
@@ -740,18 +774,45 @@ async function fetchPlaceToPlugGraphqlStatusData(): Promise<ExternalStatus[]> {
         if (!Number.isFinite(lon) || !Number.isFinite(lat)) return null;
 
         const statusValue = zone?.status;
-        const plugStatuses: string[] =
+        const plugs: Array<{ id?: string; status?: string; power?: unknown; plugType?: string }> =
           zone?.stations?.flatMap((station: any) =>
-            station?.services?.flatMap((service: any) =>
-              service?.plugs?.map((plug: any) => String(plug?.status ?? "")).filter(Boolean)
-            )
+            station?.services?.flatMap((service: any) => service?.plugs ?? [])
           ) ?? [];
+
+        const plugStatuses = plugs
+          .map((plug) => String(plug?.status ?? ""))
+          .map((value) => value.trim())
+          .filter(Boolean);
 
         const plugDerivedAvailability = deriveAvailabilityFromPlaceToPlugPlugs(plugStatuses);
         const availability =
           plugDerivedAvailability !== "unknown"
             ? plugDerivedAvailability
             : normalizeAvailability(statusValue);
+
+        const ports = plugs
+          .map((plug, index) => {
+            const plugTypeRaw = plug?.plugType ? String(plug.plugType) : undefined;
+            const connectorLabel = formatPlaceToPlugPlugType(plugTypeRaw);
+            const powerKw = formatPowerKw(plug?.power);
+            const statusRaw = plug?.status ? String(plug.status) : undefined;
+            return {
+              id: plug?.id ? String(plug.id) : `${zone?.id ?? "zone"}-${index}`,
+              status: statusRaw,
+              availability: normalizePlaceToPlugOccupancy(statusRaw),
+              powerKw,
+              plugType: plugTypeRaw,
+              connectorLabel
+            };
+          })
+          .filter((port) => Boolean(port.id));
+
+        const connectorsFromPorts = Array.from(
+          new Set(ports.map((port) => port.connectorLabel).filter(Boolean))
+        ) as string[];
+
+        const powerValues = ports.map((port) => port.powerKw).filter((value) => value !== undefined);
+        const maxPower = powerValues.length ? Math.max(...powerValues) : undefined;
 
         const statusLabel =
           buildPlaceToPlugLabelFromPlugs(plugStatuses) ??
@@ -761,8 +822,11 @@ async function fetchPlaceToPlugGraphqlStatusData(): Promise<ExternalStatus[]> {
 
         return {
           name,
+          connectors: connectorsFromPorts.length ? connectorsFromPorts : undefined,
+          power: maxPower ? `${maxPower} kW` : undefined,
           statusLabel,
           availability,
+          ports: ports.length ? ports : undefined,
           coordinates: [lon, lat] as [number, number]
         } satisfies ExternalStatus;
       })
@@ -902,9 +966,11 @@ export async function fetchChargingStations(): Promise<ChargingStation[]> {
           operator: tags.operator || tags.network,
           address: address || matchedStatus?.address || city,
           city,
-          connectors: connectors.length ? connectors : undefined,
+          connectors: Array.from(
+            new Set([...(connectors ?? []), ...(matchedStatus?.connectors ?? [])])
+          ).filter(Boolean),
           power: tags["charge:output"] || matchedStatus?.power,
-          capacity: tags.capacity,
+          capacity: tags.capacity || (matchedStatus?.ports?.length ? String(matchedStatus.ports.length) : undefined),
           access: tags.access,
           open24_7: opening?.includes("24/7"),
           openingHours: opening,
@@ -913,6 +979,7 @@ export async function fetchChargingStations(): Promise<ChargingStation[]> {
               ? matchedStatus.availability
               : osmAvailability,
           statusLabel: matchedStatus?.statusLabel ?? osmStatusLabel,
+          ports: matchedStatus?.ports,
           coordinates: [lon, lat]
         } as ChargingStation;
       })
@@ -928,8 +995,10 @@ export async function fetchChargingStations(): Promise<ChargingStation[]> {
           name: status.name ? toTitleCase(status.name) : "Charging Station",
           address: status.address,
           power: status.power,
+          connectors: status.connectors,
           availability: status.availability ?? "unknown",
           statusLabel: status.statusLabel,
+          ports: status.ports,
           coordinates: status.coordinates
         });
         addedFromExternal++;
