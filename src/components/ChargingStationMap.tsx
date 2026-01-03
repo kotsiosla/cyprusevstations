@@ -318,7 +318,10 @@ export default function ChargingStationMap({
       .setLngLat(selectedStation.coordinates)
       .setHTML(
         `<div class="text-sm font-semibold">${escapeHtml(selectedStation.name)}</div>` +
-          (selectedStation.placeToPlugName && selectedStation.placeToPlugName !== selectedStation.name
+          (selectedStation.osmName
+            ? `<div class="text-xs text-muted-foreground">OSM: ${escapeHtml(selectedStation.osmName)}</div>`
+            : "") +
+          (selectedStation.placeToPlugName
             ? `<div class="text-xs text-muted-foreground">PlaceToPlug: ${escapeHtml(
                 selectedStation.placeToPlugName
               )}</div>`

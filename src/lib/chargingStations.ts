@@ -1089,7 +1089,7 @@ export async function fetchChargingStations(): Promise<ChargingStation[]> {
           id: `${el.type}/${el.id}`,
           name: osmName,
           osmName,
-          placeToPlugName: placeToPlugName && placeToPlugName !== osmName ? placeToPlugName : undefined,
+          placeToPlugName,
           operator: tags.operator || tags.network,
           address: address || matchedStatus?.address || city,
           city,

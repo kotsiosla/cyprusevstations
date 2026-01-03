@@ -80,11 +80,14 @@ const ChargingStationList = ({
                   <BatteryCharging className="w-4 h-4 text-primary" />
                 </div>
                 <div className="min-w-0 flex-1">
-                  <h3 className="font-display font-medium text-sm truncate">
-                    {station.name}
-                  </h3>
-                  {station.placeToPlugName && station.placeToPlugName !== station.name && (
+                  <h3 className="font-display font-medium text-sm truncate">{station.name}</h3>
+                  {station.osmName && (
                     <p className="text-[0.7rem] text-muted-foreground truncate mt-0.5">
+                      OSM: {station.osmName}
+                    </p>
+                  )}
+                  {station.placeToPlugName && (
+                    <p className="text-[0.7rem] text-muted-foreground truncate">
                       PlaceToPlug: {station.placeToPlugName}
                     </p>
                   )}
