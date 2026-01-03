@@ -118,7 +118,7 @@ function formatPlaceToPlugPlugType(value?: string) {
     IEC_62196_T1: "Type 1",
     SCHUKO: "Schuko"
   };
-  return map[normalized] ?? normalized.replaceAll("_", " ");
+  return map[normalized] ?? normalized.split("_").join(" ");
 }
 
 function formatPowerKw(value?: unknown) {
@@ -1068,7 +1068,7 @@ async function fetchPlaceToPlugGraphqlStatusData(): Promise<ExternalStatus[]> {
         coordinates: [lon, lat] as [number, number]
       } satisfies ExternalStatus;
     })
-    .filter((item): item is ExternalStatus => Boolean(item));
+    .filter((item): item is NonNullable<typeof item> => Boolean(item));
 
   if (items.length) writeCache(items);
   return items;

@@ -156,12 +156,11 @@ export default function ChargingStationMap({
         const source = map.getSource("stations") as maplibregl.GeoJSONSource | undefined;
         if (!source || clusterId === undefined) return;
 
-        source.getClusterExpansionZoom(clusterId, (error, zoom) => {
-          if (error) return;
+        source.getClusterExpansionZoom(clusterId).then((zoom) => {
           const [longitude, latitude] = (features[0].geometry as GeoJSON.Point)
             .coordinates as [number, number];
           map.easeTo({ center: [longitude, latitude], zoom });
-        });
+        }).catch(() => {});
       });
 
       map.on("click", "unclustered-point", (event) => {
@@ -268,11 +267,11 @@ export default function ChargingStationMap({
 
     const escapeHtml = (value: string) =>
       value
-        .replaceAll("&", "&amp;")
-        .replaceAll("<", "&lt;")
-        .replaceAll(">", "&gt;")
-        .replaceAll('"', "&quot;")
-        .replaceAll("'", "&#39;");
+        .split("&").join("&amp;")
+        .split("<").join("&lt;")
+        .split(">").join("&gt;")
+        .split('"').join("&quot;")
+        .split("'").join("&#39;");
 
     const portsHtml = selectedStation.ports?.length
       ? `<div class="text-xs mt-2">
