@@ -50,6 +50,13 @@ area(3600307787)->.cy;
   node["amenity"="charging_station"](area.cy);
   way["amenity"="charging_station"](area.cy);
   relation["amenity"="charging_station"](area.cy);
+  // Some chargers are mapped as fuel stations or POIs with electricity.
+  node["fuel:electricity"="yes"](area.cy);
+  way["fuel:electricity"="yes"](area.cy);
+  relation["fuel:electricity"="yes"](area.cy);
+  node["charging_station"="yes"](area.cy);
+  way["charging_station"="yes"](area.cy);
+  relation["charging_station"="yes"](area.cy);
 );
 out center tags;`;
 }
@@ -709,7 +716,89 @@ async function fetchPlaceToPlugStatusData(): Promise<ExternalStatus[]> {
 async function fetchPlaceToPlugGraphqlStatusData(): Promise<ExternalStatus[]> {
   // Public PlaceToPlug web app uses this GraphQL endpoint and returns zone/plug status.
   // Note: "status" may represent availability only for some networks; treat unknowns cautiously.
-  const query = `
+  const cacheKey = "placetoplug_cyprus_zones_v1";
+  const cacheTtlMs = 6 * 60 * 60 * 1000; // 6h
+
+  const readCache = () => {
+    if (typeof localStorage === "undefined") return null;
+    const raw = localStorage.getItem(cacheKey);
+    if (!raw) return null;
+    try {
+      const parsed = JSON.parse(raw) as { fetchedAt: number; items: ExternalStatus[] };
+      if (!parsed?.fetchedAt || !Array.isArray(parsed.items)) return null;
+      if (Date.now() - parsed.fetchedAt > cacheTtlMs) return null;
+      return parsed.items;
+    } catch {
+      return null;
+    }
+  };
+
+  const writeCache = (items: ExternalStatus[]) => {
+    if (typeof localStorage === "undefined") return;
+    try {
+      localStorage.setItem(cacheKey, JSON.stringify({ fetchedAt: Date.now(), items }));
+    } catch {
+      // ignore quota / privacy errors
+    }
+  };
+
+  const cached = readCache();
+  if (cached?.length) return cached;
+
+  const requestGraphql = async (query: string, variables: any) => {
+    const res = await fetchWithRetries(
+      PLACETOPLUG_GRAPHQL_ENDPOINT,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "apollo-require-preflight": "true",
+          platform: "WEB",
+          "Accept-Language": "en"
+        },
+        body: JSON.stringify({ query, variables })
+      },
+      1,
+      800
+    );
+    if (!res) return null;
+    try {
+      return await res.json();
+    } catch {
+      return null;
+    }
+  };
+
+  // PlaceToPlug returns results sorted by distance from a location.
+  // To approximate "all Cyprus", query multiple seed locations across the island,
+  // paginate a few pages, and dedupe by ID.
+  const cyprusSeeds = [
+    { latitude: 35.1856, longitude: 33.3823 }, // Nicosia
+    { latitude: 34.6751, longitude: 33.0186 }, // Limassol
+    { latitude: 34.9167, longitude: 33.6376 }, // Larnaca
+    { latitude: 34.9877, longitude: 33.9997 }, // Ayia Napa
+    { latitude: 34.7721, longitude: 32.4162 }, // Paphos
+    { latitude: 35.3386, longitude: 33.3189 }, // Kyrenia area
+    { latitude: 35.1186, longitude: 33.9473 }, // Famagusta area
+    { latitude: 35.0382, longitude: 32.4255 } // Polis
+  ];
+
+  const indexQuery = `
+    query Query($query: FindChargingZone!) {
+      findChargingZones(query: $query) {
+        hasNextPage
+        chargingZones {
+          id
+          name
+          coordinates
+          status
+          address { street city country }
+        }
+      }
+    }
+  `;
+
+  const detailQuery = `
     query Query($query: FindChargingZone!) {
       findChargingZones(query: $query) {
         chargingZones {
@@ -717,13 +806,14 @@ async function fetchPlaceToPlugGraphqlStatusData(): Promise<ExternalStatus[]> {
           name
           coordinates
           status
+          address { street city country }
           stations {
             services {
               plugs {
+                id
                 status
                 power
                 plugType
-                id
               }
             }
           }
@@ -732,109 +822,134 @@ async function fetchPlaceToPlugGraphqlStatusData(): Promise<ExternalStatus[]> {
     }
   `;
 
-  const variables = {
-    query: {
-      // Ask specifically for zones that can provide real-time status when possible.
-      filters: { realTime: true },
-      // Center of Cyprus (lon/lat in app is [33.3823, 35.1856]).
-      params: { location: { latitude: 35.1856, longitude: 33.3823 } },
-      limit: 500,
-      page: 1
+  const zoneIndexById = new Map<string, any>();
+
+  for (const seed of cyprusSeeds) {
+    // Cap pages per seed to avoid excessive calls on the client.
+    for (let page = 1; page <= 5; page += 1) {
+      const variables = {
+        query: {
+          filters: {},
+          params: { location: seed },
+          limit: 200,
+          page
+        }
+      };
+      const payload = await requestGraphql(indexQuery, variables);
+      const zones: any[] = payload?.data?.findChargingZones?.chargingZones ?? [];
+      if (!Array.isArray(zones) || zones.length === 0) break;
+
+      let cyprusCount = 0;
+      for (const zone of zones) {
+        const country = zone?.address?.country;
+        if (country !== "Cyprus") continue;
+        cyprusCount += 1;
+        const id = zone?.id ? String(zone.id) : null;
+        if (!id) continue;
+        if (!zoneIndexById.has(id)) zoneIndexById.set(id, zone);
+      }
+
+      // If this page produced zero Cyprus zones, further pages from this seed are likely outside Cyprus.
+      if (cyprusCount === 0) break;
+
+      const hasNextPage = Boolean(payload?.data?.findChargingZones?.hasNextPage);
+      if (!hasNextPage) break;
     }
-  };
-
-  const res = await fetchWithRetries(
-    PLACETOPLUG_GRAPHQL_ENDPOINT,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "apollo-require-preflight": "true",
-        platform: "WEB",
-        "Accept-Language": "en"
-      },
-      body: JSON.stringify({ query, variables })
-    },
-    1,
-    800
-  );
-  if (!res) return [];
-
-  try {
-    const payload = await res.json();
-    const zones: any[] = payload?.data?.findChargingZones?.chargingZones ?? [];
-    if (!Array.isArray(zones) || zones.length === 0) return [];
-
-    return zones
-      .map((zone) => {
-        const coords = Array.isArray(zone?.coordinates) ? zone.coordinates : null;
-        if (!coords || coords.length < 2) return null;
-        const lon = Number(coords[0]);
-        const lat = Number(coords[1]);
-        if (!Number.isFinite(lon) || !Number.isFinite(lat)) return null;
-
-        const statusValue = zone?.status;
-        const plugs: Array<{ id?: string; status?: string; power?: unknown; plugType?: string }> =
-          zone?.stations?.flatMap((station: any) =>
-            station?.services?.flatMap((service: any) => service?.plugs ?? [])
-          ) ?? [];
-
-        const plugStatuses = plugs
-          .map((plug) => String(plug?.status ?? ""))
-          .map((value) => value.trim())
-          .filter(Boolean);
-
-        const plugDerivedAvailability = deriveAvailabilityFromPlaceToPlugPlugs(plugStatuses);
-        const availability =
-          plugDerivedAvailability !== "unknown"
-            ? plugDerivedAvailability
-            : normalizeAvailability(statusValue);
-
-        const ports = plugs
-          .map((plug, index) => {
-            const plugTypeRaw = plug?.plugType ? String(plug.plugType) : undefined;
-            const connectorLabel = formatPlaceToPlugPlugType(plugTypeRaw);
-            const powerKw = formatPowerKw(plug?.power);
-            const statusRaw = plug?.status ? String(plug.status) : undefined;
-            return {
-              id: plug?.id ? String(plug.id) : `${zone?.id ?? "zone"}-${index}`,
-              status: statusRaw,
-              availability: normalizePlaceToPlugOccupancy(statusRaw),
-              powerKw,
-              plugType: plugTypeRaw,
-              connectorLabel
-            };
-          })
-          .filter((port) => Boolean(port.id));
-
-        const connectorsFromPorts = Array.from(
-          new Set(ports.map((port) => port.connectorLabel).filter(Boolean))
-        ) as string[];
-
-        const powerValues = ports.map((port) => port.powerKw).filter((value) => value !== undefined);
-        const maxPower = powerValues.length ? Math.max(...powerValues) : undefined;
-
-        const statusLabel =
-          buildPlaceToPlugLabelFromPlugs(plugStatuses) ??
-          normalizePlaceToPlugLabel(statusValue) ??
-          normalizeStatusLabel(statusValue);
-        const name = zone?.name ? String(zone.name) : undefined;
-
-        return {
-          name,
-          connectors: connectorsFromPorts.length ? connectorsFromPorts : undefined,
-          power: maxPower ? `${maxPower} kW` : undefined,
-          statusLabel,
-          availability,
-          ports: ports.length ? ports : undefined,
-          coordinates: [lon, lat] as [number, number]
-        } satisfies ExternalStatus;
-      })
-      .filter((item): item is ExternalStatus => Boolean(item));
-  } catch (error) {
-    console.warn("Failed to parse PlaceToPlug GraphQL response:", error);
-    return [];
   }
+
+  const ids = Array.from(zoneIndexById.keys());
+  if (!ids.length) return [];
+
+  const batchSize = 50;
+  const detailedZones: any[] = [];
+  for (let start = 0; start < ids.length; start += batchSize) {
+    const batch = ids.slice(start, start + batchSize);
+    const variables = {
+      query: {
+        // Pull plug-level details for these IDs.
+        filters: { ids: batch, realTime: true },
+        params: {},
+        limit: batch.length,
+        page: 1
+      }
+    };
+    const payload = await requestGraphql(detailQuery, variables);
+    const zones: any[] = payload?.data?.findChargingZones?.chargingZones ?? [];
+    if (Array.isArray(zones) && zones.length) detailedZones.push(...zones);
+  }
+
+  const items = detailedZones
+    .map((zone) => {
+      const coords = Array.isArray(zone?.coordinates) ? zone.coordinates : null;
+      if (!coords || coords.length < 2) return null;
+      const lon = Number(coords[0]);
+      const lat = Number(coords[1]);
+      if (!Number.isFinite(lon) || !Number.isFinite(lat)) return null;
+
+      const statusValue = zone?.status;
+      const plugs: Array<{ id?: string; status?: string; power?: unknown; plugType?: string }> =
+        zone?.stations?.flatMap((station: any) =>
+          station?.services?.flatMap((service: any) => service?.plugs ?? [])
+        ) ?? [];
+
+      const plugStatuses = plugs
+        .map((plug) => String(plug?.status ?? ""))
+        .map((value) => value.trim())
+        .filter(Boolean);
+
+      const plugDerivedAvailability = deriveAvailabilityFromPlaceToPlugPlugs(plugStatuses);
+      const availability =
+        plugDerivedAvailability !== "unknown" ? plugDerivedAvailability : normalizeAvailability(statusValue);
+
+      const ports = plugs
+        .map((plug, index) => {
+          const plugTypeRaw = plug?.plugType ? String(plug.plugType) : undefined;
+          const connectorLabel = formatPlaceToPlugPlugType(plugTypeRaw);
+          const powerKw = formatPowerKw(plug?.power);
+          const statusRaw = plug?.status ? String(plug.status) : undefined;
+          return {
+            id: plug?.id ? String(plug.id) : `${zone?.id ?? "zone"}-${index}`,
+            status: statusRaw,
+            availability: normalizePlaceToPlugOccupancy(statusRaw),
+            powerKw,
+            plugType: plugTypeRaw,
+            connectorLabel
+          };
+        })
+        .filter((port) => Boolean(port.id));
+
+      const connectorsFromPorts = Array.from(
+        new Set(ports.map((port) => port.connectorLabel).filter(Boolean))
+      ) as string[];
+
+      const powerValues = ports.map((port) => port.powerKw).filter((value) => value !== undefined);
+      const maxPower = powerValues.length ? Math.max(...powerValues) : undefined;
+
+      const statusLabel =
+        buildPlaceToPlugLabelFromPlugs(plugStatuses) ??
+        normalizePlaceToPlugLabel(statusValue) ??
+        normalizeStatusLabel(statusValue);
+      const name = zone?.name ? String(zone.name) : undefined;
+
+      const addressStreet = zone?.address?.street ? String(zone.address.street) : undefined;
+      const city = zone?.address?.city ? String(zone.address.city) : undefined;
+      const address = [addressStreet, city].filter(Boolean).join(", ") || undefined;
+
+      return {
+        name,
+        address,
+        connectors: connectorsFromPorts.length ? connectorsFromPorts : undefined,
+        power: maxPower ? `${maxPower} kW` : undefined,
+        statusLabel,
+        availability,
+        ports: ports.length ? ports : undefined,
+        coordinates: [lon, lat] as [number, number]
+      } satisfies ExternalStatus;
+    })
+    .filter((item): item is ExternalStatus => Boolean(item));
+
+  if (items.length) writeCache(items);
+  return items;
 }
 
 async function fetchExternalStatusData(): Promise<ExternalStatus[]> {
