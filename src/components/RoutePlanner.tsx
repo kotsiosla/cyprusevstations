@@ -1,5 +1,15 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
+import {
+  DndContext,
+  PointerSensor,
+  closestCenter,
+  useSensor,
+  useSensors,
+  type DragEndEvent
+} from "@dnd-kit/core";
+import { SortableContext, arrayMove, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import type { ChargingStation } from "@/lib/chargingStations";
 import {
   CYPRUS_PLACES,
@@ -28,6 +38,8 @@ import {
   ArrowRightLeft,
   Link2,
   Share2,
+  GripVertical,
+  Map as MapIcon,
   X
 } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -49,6 +61,19 @@ const numberOr = (value: string, fallback: number) => {
 };
 
 type PlaceValue = { label: string; coordinates: [number, number] } | null;
+type StopItem = { id: string; place: PlaceValue };
+
+const makeStopId = (() => {
+  let counter = 0;
+  return () => `stop_${Date.now()}_${(counter += 1)}`;
+})();
+
+const ROUTE_PROFILES = [
+  { id: "eco", label: "Eco", multiplier: 0.9 },
+  { id: "normal", label: "Normal", multiplier: 1.0 },
+  { id: "fast", label: "Fast", multiplier: 1.1 }
+] as const;
+type RouteProfileId = (typeof ROUTE_PROFILES)[number]["id"];
 
 const encodePlace = (place: PlaceValue) => {
   if (!place) return null;
@@ -195,6 +220,58 @@ function PlaceAutocomplete({
   );
 }
 
+function StopRow({
+  stopId,
+  index,
+  value,
+  onChange,
+  onRemove
+}: {
+  stopId: string;
+  index: number;
+  value: PlaceValue;
+  onChange: (next: PlaceValue) => void;
+  onRemove: () => void;
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: stopId });
+  const style: React.CSSProperties = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.85 : 1
+  };
+
+  return (
+    <div ref={setNodeRef} style={style} className="rounded-lg border p-3 bg-background">
+      <div className="flex items-start gap-2">
+        <Button
+          type="button"
+          variant="outline"
+          size="icon"
+          aria-label="Drag stop"
+          className="shrink-0 cursor-grab active:cursor-grabbing"
+          {...attributes}
+          {...listeners}
+        >
+          <GripVertical className="h-4 w-4" />
+        </Button>
+
+        <div className="flex-1">
+          <PlaceAutocomplete
+            label={`Stop ${index + 1}`}
+            placeholder="π.χ. Troodos, Larnaca…"
+            value={value}
+            onChange={onChange}
+          />
+        </div>
+
+        <Button type="button" variant="outline" size="icon" aria-label="Remove stop" onClick={onRemove}>
+          <X className="h-4 w-4" />
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 export default function RoutePlanner({ stations, onApplyToMap, onSelectStation }: RoutePlannerProps) {
   const [searchParams, setSearchParams] = useSearchParams();
   const hydratedFromUrlRef = useRef(false);
@@ -205,7 +282,8 @@ export default function RoutePlanner({ stations, onApplyToMap, onSelectStation }
   const [templateId, setTemplateId] = useState(CYPRUS_ROUTE_TEMPLATES[0]?.id ?? "limassol-paphos");
   const [origin, setOrigin] = useState<PlaceValue>(null);
   const [destination, setDestination] = useState<PlaceValue>(null);
-  const [vias, setVias] = useState<PlaceValue[]>([]);
+  const [stops, setStops] = useState<StopItem[]>([]);
+  const [routeProfile, setRouteProfile] = useState<RouteProfileId>("normal");
   const [currentSocPct, setCurrentSocPct] = useState("55");
   const [batteryKwh, setBatteryKwh] = useState("60");
   const [consumption, setConsumption] = useState("18");
@@ -220,6 +298,8 @@ export default function RoutePlanner({ stations, onApplyToMap, onSelectStation }
   const [routingStatus, setRoutingStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
   const [routedPath, setRoutedPath] = useState<RoutedPath | null>(null);
   const [copiedLink, setCopiedLink] = useState(false);
+
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
 
   const selectedTemplate = useMemo(
     () => CYPRUS_ROUTE_TEMPLATES.find((t) => t.id === templateId) ?? CYPRUS_ROUTE_TEMPLATES[0],
@@ -239,7 +319,11 @@ export default function RoutePlanner({ stations, onApplyToMap, onSelectStation }
 
     setOrigin(decodePlace(searchParams.get("o")));
     setDestination(decodePlace(searchParams.get("d")));
-    setVias(decodePlaces(searchParams.get("v")));
+    const viaPlaces = decodePlaces(searchParams.get("v"));
+    setStops(viaPlaces.map((place) => ({ id: makeStopId(), place })));
+
+    const prof = searchParams.get("prof");
+    if (prof === "eco" || prof === "normal" || prof === "fast") setRouteProfile(prof);
 
     const soc = searchParams.get("soc");
     if (soc) setCurrentSocPct(soc);
@@ -269,7 +353,9 @@ export default function RoutePlanner({ stations, onApplyToMap, onSelectStation }
   const customTemplate = useMemo(() => {
     if (!origin || !destination) return null;
     const name = `${origin.label} → ${destination.label}`;
-    const viaCoords = vias.map((v) => v?.coordinates).filter((c): c is [number, number] => Boolean(c));
+    const viaCoords = stops
+      .map((s) => s.place?.coordinates)
+      .filter((c): c is [number, number] => Boolean(c));
     const polyline: [number, number][] = [origin.coordinates, ...viaCoords, destination.coordinates];
     return {
       id: "custom",
@@ -279,7 +365,7 @@ export default function RoutePlanner({ stations, onApplyToMap, onSelectStation }
       end: { id: "destination", label: destination.label, coordinates: destination.coordinates },
       polyline
     } as const;
-  }, [origin, destination, vias]);
+  }, [origin, destination, stops]);
 
   const routeWaypoints = useMemo(() => {
     if (routeMode === "custom") {
@@ -327,10 +413,11 @@ export default function RoutePlanner({ stations, onApplyToMap, onSelectStation }
       const next = new URLSearchParams();
       next.set("rm", routeMode === "custom" ? "c" : "p");
       next.set("tid", templateId);
+      next.set("prof", routeProfile);
 
       const o = encodePlace(origin);
       const d = encodePlace(destination);
-      const v = encodePlaces(vias);
+      const v = encodePlaces(stops.map((s) => s.place));
       if (routeMode === "custom") {
         if (o) next.set("o", o);
         if (d) next.set("d", d);
@@ -365,7 +452,8 @@ export default function RoutePlanner({ stations, onApplyToMap, onSelectStation }
     templateId,
     origin,
     destination,
-    vias,
+    stops,
+    routeProfile,
     currentSocPct,
     batteryKwh,
     consumption,
@@ -384,12 +472,13 @@ export default function RoutePlanner({ stations, onApplyToMap, onSelectStation }
     const routeDistanceKm = routedPath?.distanceKm;
     const routeDurationMin = routedPath?.durationMin;
     const effectiveTemplateId = routeMode === "custom" ? "custom" : templateId;
+    const multiplier = ROUTE_PROFILES.find((p) => p.id === routeProfile)?.multiplier ?? 1;
     return planRouteAwareCharging(stations, {
       templateId: effectiveTemplateId,
       templateOverride: routeMode === "custom" ? (customTemplate ?? undefined) : undefined,
       currentSocPct: numberOr(currentSocPct, 55),
       batteryKwh: numberOr(batteryKwh, 60),
-      consumptionKwhPer100Km: numberOr(consumption, 18),
+      consumptionKwhPer100Km: numberOr(consumption, 18) * multiplier,
       desiredArrivalSocPct: numberOr(arrivalSocPct, 10),
       preferredChargeToSocPct: numberOr(preferredChargeTo, 80),
       vehicleMaxChargeKw: numberOr(vehicleMaxKw, 100),
@@ -416,7 +505,8 @@ export default function RoutePlanner({ stations, onApplyToMap, onSelectStation }
     fastOnly,
     availableOnly,
     maxStops,
-    routedPath
+    routedPath,
+    routeProfile
   ]);
 
   const template = result.template;
@@ -426,6 +516,45 @@ export default function RoutePlanner({ stations, onApplyToMap, onSelectStation }
     typeof navigator !== "undefined" && typeof (navigator as Partial<NavigatorShare>).share === "function";
   const canCopyLink =
     typeof navigator !== "undefined" && typeof (navigator as Partial<NavigatorClipboard>).clipboard?.writeText === "function";
+
+  const googleMapsUrl = useMemo(() => {
+    const toLatLon = (p: PlaceValue) => (p ? `${p.coordinates[1]},${p.coordinates[0]}` : null);
+    const toLatLonFromCoord = (c: [number, number]) => `${c[1]},${c[0]}`;
+
+    const waypoints = (() => {
+      if (routeMode === "custom") {
+        const viaPlaces = stops.map((s) => s.place).filter(Boolean) as Array<NonNullable<PlaceValue>>;
+        return viaPlaces.slice(0, 8).map((p) => toLatLon(p)).filter((x): x is string => Boolean(x));
+      }
+      const mids = template.polyline.slice(1, -1).slice(0, 3).map(toLatLonFromCoord);
+      return mids;
+    })();
+
+    const originStr = routeMode === "custom" ? toLatLon(origin) : toLatLonFromCoord(template.start.coordinates);
+    const destStr = routeMode === "custom" ? toLatLon(destination) : toLatLonFromCoord(template.end.coordinates);
+    if (!originStr || !destStr) return null;
+
+    const params = new URLSearchParams({
+      api: "1",
+      travelmode: "driving",
+      origin: originStr,
+      destination: destStr
+    });
+    if (waypoints.length) params.set("waypoints", waypoints.join("|"));
+    return `https://www.google.com/maps/dir/?${params.toString()}`;
+  }, [routeMode, origin, destination, stops, template]);
+
+  const handleDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over) return;
+    if (active.id === over.id) return;
+    setStops((prev) => {
+      const oldIndex = prev.findIndex((s) => s.id === active.id);
+      const newIndex = prev.findIndex((s) => s.id === over.id);
+      if (oldIndex < 0 || newIndex < 0) return prev;
+      return arrayMove(prev, oldIndex, newIndex);
+    });
+  };
 
   return (
     <Card className="shadow-soft">
@@ -508,7 +637,7 @@ export default function RoutePlanner({ stations, onApplyToMap, onSelectStation }
                       const a = origin;
                       setOrigin(destination);
                       setDestination(a);
-                      setVias((prev) => [...prev].reverse());
+                      setStops((prev) => [...prev].reverse());
                     }}
                   >
                     <ArrowRightLeft className="h-4 w-4" />
@@ -530,37 +659,32 @@ export default function RoutePlanner({ stations, onApplyToMap, onSelectStation }
                       type="button"
                       variant="outline"
                       size="sm"
-                      onClick={() => setVias((prev) => (prev.length >= 3 ? prev : [...prev, null]))}
-                      disabled={vias.length >= 3}
+                      onClick={() =>
+                        setStops((prev) => (prev.length >= 3 ? prev : [...prev, { id: makeStopId(), place: null }]))
+                      }
+                      disabled={stops.length >= 3}
                     >
                       Add stop
                     </Button>
                   </div>
 
                   <div className="space-y-3">
-                    {vias.map((v, idx) => (
-                      <div key={idx} className="rounded-lg border p-3">
-                        <div className="flex items-start justify-between gap-2">
-                          <PlaceAutocomplete
-                            label={`Stop ${idx + 1}`}
-                            placeholder="π.χ. Troodos, Larnaca…"
-                            value={v}
+                    <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+                      <SortableContext items={stops.map((s) => s.id)} strategy={verticalListSortingStrategy}>
+                        {stops.map((stop, idx) => (
+                          <StopRow
+                            key={stop.id}
+                            stopId={stop.id}
+                            index={idx}
+                            value={stop.place}
                             onChange={(next) =>
-                              setVias((prev) => prev.map((item, i) => (i === idx ? next : item)))
+                              setStops((prev) => prev.map((s) => (s.id === stop.id ? { ...s, place: next } : s)))
                             }
+                            onRemove={() => setStops((prev) => prev.filter((s) => s.id !== stop.id))}
                           />
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="icon"
-                            aria-label="Remove stop"
-                            onClick={() => setVias((prev) => prev.filter((_, i) => i !== idx))}
-                          >
-                            <X className="h-4 w-4" />
-                          </Button>
-                        </div>
-                      </div>
-                    ))}
+                        ))}
+                      </SortableContext>
+                    </DndContext>
                   </div>
 
                   {origin && destination ? (
@@ -572,10 +696,8 @@ export default function RoutePlanner({ stations, onApplyToMap, onSelectStation }
                           const d = destination.coordinates;
                           const nearOrigin = haversineDistanceKm(p.coordinates, o) < 2;
                           const nearDest = haversineDistanceKm(p.coordinates, d) < 2;
-                          const already = vias.some(
-                            (x) =>
-                              x &&
-                              haversineDistanceKm(x.coordinates, p.coordinates) < 0.2
+                          const already = stops.some(
+                            (x) => x.place && haversineDistanceKm(x.place.coordinates, p.coordinates) < 0.2
                           );
                           return !nearOrigin && !nearDest && !already;
                         })
@@ -587,7 +709,13 @@ export default function RoutePlanner({ stations, onApplyToMap, onSelectStation }
                               type="button"
                               size="sm"
                               variant="secondary"
-                              onClick={() => setVias((prev) => (prev.length >= 3 ? prev : [...prev, { label: p.label, coordinates: p.coordinates }]))}
+                              onClick={() =>
+                                setStops((prev) =>
+                                  prev.length >= 3
+                                    ? prev
+                                    : [...prev, { id: makeStopId(), place: { label: p.label, coordinates: p.coordinates } }]
+                                )
+                              }
                             >
                               {p.label}
                             </Button>
@@ -612,6 +740,21 @@ export default function RoutePlanner({ stations, onApplyToMap, onSelectStation }
               <div className="mt-3 flex items-center justify-between gap-3 rounded-md border bg-background/60 px-3 py-2">
                 <span className="text-xs">Live routing (beta)</span>
                 <Switch checked={useLiveRouting} onCheckedChange={setUseLiveRouting} />
+              </div>
+              <div className="mt-2 flex items-center justify-between gap-3 rounded-md border bg-background/60 px-3 py-2">
+                <span className="text-xs">Profile</span>
+                <Select value={routeProfile} onValueChange={(v) => setRouteProfile(v as RouteProfileId)}>
+                  <SelectTrigger className="h-8 w-[140px]">
+                    <SelectValue placeholder="Profile" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {ROUTE_PROFILES.map((p) => (
+                      <SelectItem key={p.id} value={p.id}>
+                        {p.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
               {useLiveRouting ? (
                 <p className="mt-2 text-[0.7rem] text-muted-foreground">
@@ -647,6 +790,13 @@ export default function RoutePlanner({ stations, onApplyToMap, onSelectStation }
               <div className="space-y-1">
                 <label className="text-xs text-muted-foreground">Κατανάλωση (kWh/100km)</label>
                 <Input value={consumption} onChange={(e) => setConsumption(e.target.value)} inputMode="numeric" />
+                <p className="text-[0.7rem] text-muted-foreground">
+                  Profile:{" "}
+                  {(() => {
+                    const m = ROUTE_PROFILES.find((p) => p.id === routeProfile)?.multiplier ?? 1;
+                    return `×${m.toFixed(2)} applied`;
+                  })()}
+                </p>
               </div>
             </div>
             <div className="grid gap-2 sm:grid-cols-2">
@@ -741,6 +891,17 @@ export default function RoutePlanner({ stations, onApplyToMap, onSelectStation }
               >
                 Apply to map
               </Button>
+              {googleMapsUrl ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="gap-2"
+                  onClick={() => window.open(googleMapsUrl, "_blank", "noopener,noreferrer")}
+                >
+                  <MapIcon className="h-4 w-4" />
+                  Open in Google Maps
+                </Button>
+              ) : null}
               <Button
                 type="button"
                 variant="outline"
