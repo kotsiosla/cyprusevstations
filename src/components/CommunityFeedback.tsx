@@ -14,6 +14,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { toast } from "@/components/ui/sonner";
 import { cn } from "@/lib/utils";
 import { Bell, CheckCircle2, MessageSquare, Star, Timer, Users } from "lucide-react";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 type Props = {
   station: ChargingStation;
@@ -52,38 +53,87 @@ export default function CommunityFeedback({ station, vehicleProfile }: Props) {
     <div className="mt-3 space-y-2">
       <div className="flex flex-wrap items-center gap-2">
         {vehicleProfile ? (
-          <Badge variant="outline" className={cn("text-[0.65rem]", canFit ? "border-emerald-200" : "border-rose-200")}>
-            {canFit ? "Fits your EV ✅" : "Doesn’t fit your EV ❌"}
-          </Badge>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Badge
+                variant="outline"
+                className={cn("text-[0.65rem]", canFit ? "border-emerald-200" : "border-rose-200")}
+              >
+                {canFit ? "Fits your EV ✅" : "Doesn’t fit your EV ❌"}
+              </Badge>
+            </TooltipTrigger>
+            <TooltipContent sideOffset={8}>
+              <span className="text-xs">
+                Based on your selected EV connector profile
+              </span>
+            </TooltipContent>
+          </Tooltip>
         ) : null}
         {vehicleProfile && est2080 ? (
-          <Badge variant="outline" className="text-[0.65rem]">
-            20→80% ~{est2080} min
-          </Badge>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Badge variant="outline" className="text-[0.65rem]">
+                20→80% ~{est2080} min
+              </Badge>
+            </TooltipTrigger>
+            <TooltipContent sideOffset={8} className="max-w-[300px]">
+              <span className="text-xs">
+                Rough estimate using station power, your EV max kW, and a taper factor
+              </span>
+            </TooltipContent>
+          </Tooltip>
         ) : null}
         {summary.ratingAvg ? (
-          <Badge variant="secondary" className="text-[0.65rem] flex items-center gap-1">
-            <Star className="h-3 w-3" /> {summary.ratingAvg} ({summary.ratingCount ?? 0})
-          </Badge>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Badge variant="secondary" className="text-[0.65rem] flex items-center gap-1">
+                <Star className="h-3 w-3" /> {summary.ratingAvg} ({summary.ratingCount ?? 0})
+              </Badge>
+            </TooltipTrigger>
+            <TooltipContent sideOffset={8}>
+              <span className="text-xs">Community rating (local)</span>
+            </TooltipContent>
+          </Tooltip>
         ) : null}
         {summary.lastConfirmedAt ? (
-          <Badge variant="outline" className={cn("text-[0.65rem]", confirmStyles)}>
-            Last confirmed {summary.lastConfirmedType} · {lastConfirmedAgo}
-          </Badge>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Badge variant="outline" className={cn("text-[0.65rem]", confirmStyles)}>
+                Last confirmed {summary.lastConfirmedType} · {lastConfirmedAgo}
+              </Badge>
+            </TooltipTrigger>
+            <TooltipContent sideOffset={8}>
+              <span className="text-xs">Crowd confirmation timestamp (stored on this device)</span>
+            </TooltipContent>
+          </Tooltip>
         ) : (
           <Badge variant="outline" className="text-[0.65rem]">
             No recent community confirmations
           </Badge>
         )}
         {typeof summary.lastQueueAhead === "number" ? (
-          <Badge variant="outline" className="text-[0.65rem] flex items-center gap-1">
-            <Users className="h-3 w-3" /> Queue: {summary.lastQueueAhead} · {queueAgo}
-          </Badge>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Badge variant="outline" className="text-[0.65rem] flex items-center gap-1">
+                <Users className="h-3 w-3" /> Queue: {summary.lastQueueAhead} · {queueAgo}
+              </Badge>
+            </TooltipTrigger>
+            <TooltipContent sideOffset={8}>
+              <span className="text-xs">People ahead, last reported by community</span>
+            </TooltipContent>
+          </Tooltip>
         ) : null}
         {typeof summary.lastMinutesRemaining === "number" ? (
-          <Badge variant="outline" className="text-[0.65rem] flex items-center gap-1">
-            <Timer className="h-3 w-3" /> ~{summary.lastMinutesRemaining} min left · {minutesAgo}
-          </Badge>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Badge variant="outline" className="text-[0.65rem] flex items-center gap-1">
+                <Timer className="h-3 w-3" /> ~{summary.lastMinutesRemaining} min left · {minutesAgo}
+              </Badge>
+            </TooltipTrigger>
+            <TooltipContent sideOffset={8}>
+              <span className="text-xs">Estimated minutes remaining (community reported)</span>
+            </TooltipContent>
+          </Tooltip>
         ) : null}
       </div>
 

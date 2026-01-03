@@ -6,6 +6,7 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import type { VehicleProfile } from "@/lib/vehicleProfiles";
 import CommunityFeedback from "@/components/CommunityFeedback";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 interface ChargingStationListProps {
   stations: ChargingStation[];
@@ -100,7 +101,25 @@ const ChargingStationList = ({
                   <BatteryCharging className="w-4 h-4 text-primary" />
                 </div>
                 <div className="min-w-0 flex-1">
-                  <h3 className="font-display font-medium text-sm truncate">{station.name}</h3>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <h3 className="font-display font-medium text-sm truncate">{station.name}</h3>
+                    </TooltipTrigger>
+                    <TooltipContent sideOffset={8} className="max-w-[360px]">
+                      <div className="space-y-1 text-xs">
+                        {station.operator ? <div><span className="font-medium">Operator:</span> {station.operator}</div> : null}
+                        {station.city ? <div><span className="font-medium">City:</span> {station.city}</div> : null}
+                        {station.address ? <div><span className="font-medium">Address:</span> {station.address}</div> : null}
+                        {station.osmName ? <div><span className="font-medium">OSM:</span> {station.osmName}</div> : null}
+                        {station.placeToPlugName ? (
+                          <div><span className="font-medium">PlaceToPlug:</span> {station.placeToPlugName}</div>
+                        ) : null}
+                        {station.ocmName ? (
+                          <div><span className="font-medium">OpenChargeMap:</span> {station.ocmName}</div>
+                        ) : null}
+                      </div>
+                    </TooltipContent>
+                  </Tooltip>
                   {station.osmName && (
                     <p className="text-[0.7rem] text-muted-foreground truncate mt-0.5">
                       OSM: {station.osmName}
@@ -122,44 +141,100 @@ const ChargingStationList = ({
                   </p>
                   <div className="flex flex-wrap gap-2 mt-2">
                     {(station.connectors ?? ["Standard AC"]).slice(0, 3).map((connector) => (
-                      <Badge key={connector} variant="secondary" className="text-[0.65rem]">
-                        {connector}
-                      </Badge>
+                      <Tooltip key={connector}>
+                        <TooltipTrigger asChild>
+                          <Badge variant="secondary" className="text-[0.65rem]">
+                            {connector}
+                          </Badge>
+                        </TooltipTrigger>
+                        <TooltipContent sideOffset={8}>
+                          <span className="text-xs">Connector type</span>
+                        </TooltipContent>
+                      </Tooltip>
                     ))}
                     {station.power && (
-                      <Badge variant="outline" className="text-[0.65rem]">
-                        {station.power}
-                      </Badge>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Badge variant="outline" className="text-[0.65rem]">
+                            {station.power}
+                          </Badge>
+                        </TooltipTrigger>
+                        <TooltipContent sideOffset={8}>
+                          <span className="text-xs">Reported max power</span>
+                        </TooltipContent>
+                      </Tooltip>
                     )}
                     {station.distanceLabel && (
-                      <Badge variant="outline" className="text-[0.65rem] flex items-center gap-1">
-                        <Radar className="w-3 h-3" />
-                        {station.distanceLabel}
-                      </Badge>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Badge variant="outline" className="text-[0.65rem] flex items-center gap-1">
+                            <Radar className="w-3 h-3" />
+                            {station.distanceLabel}
+                          </Badge>
+                        </TooltipTrigger>
+                        <TooltipContent sideOffset={8}>
+                          <span className="text-xs">Distance from your location</span>
+                        </TooltipContent>
+                      </Tooltip>
                     )}
-                    <Badge
-                      variant="outline"
-                      className={cn(
-                        "text-[0.65rem] border flex items-center gap-1",
-                        availabilityStyles(station.availability)
-                      )}
-                    >
-                      <CircleDot className="w-3 h-3" />
-                      {availabilityLabel(station)}
-                    </Badge>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Badge
+                          variant="outline"
+                          className={cn(
+                            "text-[0.65rem] border flex items-center gap-1",
+                            availabilityStyles(station.availability)
+                          )}
+                        >
+                          <CircleDot className="w-3 h-3" />
+                          {availabilityLabel(station)}
+                        </Badge>
+                      </TooltipTrigger>
+                      <TooltipContent sideOffset={8} className="max-w-[320px]">
+                        <div className="space-y-1 text-xs">
+                          <div>
+                            <span className="font-medium">Status:</span> {availabilityLabel(station)}
+                          </div>
+                          {station.statusLabel && station.statusLabel !== "Status unknown" ? (
+                            <div>
+                              <span className="font-medium">Details:</span> {station.statusLabel}
+                            </div>
+                          ) : null}
+                          {station.ports?.length ? (
+                            <div>
+                              <span className="font-medium">Ports:</span> {station.ports.length}
+                            </div>
+                          ) : null}
+                        </div>
+                      </TooltipContent>
+                    </Tooltip>
                   </div>
                 </div>
               </div>
               <div className="flex items-center gap-2 shrink-0">
                 {station.capacity && (
-                  <Badge variant="secondary" className="text-xs">
-                    {station.capacity} bays
-                  </Badge>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Badge variant="secondary" className="text-xs">
+                        {station.capacity} bays
+                      </Badge>
+                    </TooltipTrigger>
+                    <TooltipContent sideOffset={8}>
+                      <span className="text-xs">Number of bays/ports (best effort)</span>
+                    </TooltipContent>
+                  </Tooltip>
                 )}
                 {station.open24_7 && (
-                  <Badge variant="outline" className="text-xs">
-                    24/7
-                  </Badge>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Badge variant="outline" className="text-xs">
+                        24/7
+                      </Badge>
+                    </TooltipTrigger>
+                    <TooltipContent sideOffset={8}>
+                      <span className="text-xs">Open 24 hours</span>
+                    </TooltipContent>
+                  </Tooltip>
                 )}
                 <ArrowRight
                   className={cn(
@@ -171,19 +246,26 @@ const ChargingStationList = ({
             </div>
 
             <div className="mt-3 flex flex-wrap gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                className="gap-2"
-                onClick={(event) => {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  window.open(directionsUrlForStation(station), "_blank", "noopener,noreferrer");
-                }}
-              >
-                <Navigation className="w-4 h-4" />
-                Directions
-              </Button>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="gap-2"
+                    onClick={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      window.open(directionsUrlForStation(station), "_blank", "noopener,noreferrer");
+                    }}
+                  >
+                    <Navigation className="w-4 h-4" />
+                    Directions
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent sideOffset={8}>
+                  <span className="text-xs">Open directions in Google Maps</span>
+                </TooltipContent>
+              </Tooltip>
             </div>
 
             <CommunityFeedback station={station} vehicleProfile={vehicleProfile} />
