@@ -83,6 +83,11 @@ const ChargingStationList = ({
                   <h3 className="font-display font-medium text-sm truncate">
                     {station.name}
                   </h3>
+                  {station.placeToPlugName && station.placeToPlugName !== station.name && (
+                    <p className="text-[0.7rem] text-muted-foreground truncate mt-0.5">
+                      PlaceToPlug: {station.placeToPlugName}
+                    </p>
+                  )}
                   <p className="text-xs text-muted-foreground mt-1">
                     {station.operator ? `${station.operator} · ` : ""}
                     {station.city || station.address || "Cyprus"}
