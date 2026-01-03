@@ -1,7 +1,10 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import type { ChargingStation } from "@/lib/chargingStations";
 import {
+  CYPRUS_PLACES,
   CYPRUS_ROUTE_TEMPLATES,
+  haversineDistanceKm,
   planRouteAwareCharging,
   type RoutePlanResult
 } from "@/lib/routePlanner";
@@ -14,7 +17,19 @@ import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
-import { BatteryCharging, Route, Zap, AlertTriangle, CheckCircle2, Clock, LocateFixed, ArrowRightLeft, X } from "lucide-react";
+import {
+  BatteryCharging,
+  Route,
+  Zap,
+  AlertTriangle,
+  CheckCircle2,
+  Clock,
+  LocateFixed,
+  ArrowRightLeft,
+  Link2,
+  Share2,
+  X
+} from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 
@@ -34,6 +49,38 @@ const numberOr = (value: string, fallback: number) => {
 };
 
 type PlaceValue = { label: string; coordinates: [number, number] } | null;
+
+const encodePlace = (place: PlaceValue) => {
+  if (!place) return null;
+  const [lon, lat] = place.coordinates;
+  return `${lon.toFixed(5)},${lat.toFixed(5)}|${encodeURIComponent(place.label)}`;
+};
+
+const decodePlace = (raw: string | null): PlaceValue => {
+  if (!raw) return null;
+  const [coordPart, labelPart] = raw.split("|");
+  if (!coordPart) return null;
+  const [lonRaw, latRaw] = coordPart.split(",");
+  const lon = Number(lonRaw);
+  const lat = Number(latRaw);
+  if (!Number.isFinite(lon) || !Number.isFinite(lat)) return null;
+  const label = labelPart ? decodeURIComponent(labelPart) : `${lat.toFixed(4)},${lon.toFixed(4)}`;
+  return { label, coordinates: [lon, lat] };
+};
+
+const encodePlaces = (places: PlaceValue[]) =>
+  places
+    .map(encodePlace)
+    .filter((v): v is string => Boolean(v))
+    .join(";");
+
+const decodePlaces = (raw: string | null): PlaceValue[] => {
+  if (!raw) return [];
+  return raw
+    .split(";")
+    .map((part) => decodePlace(part))
+    .filter((p): p is NonNullable<PlaceValue> => Boolean(p));
+};
 
 function PlaceAutocomplete({
   label,
@@ -149,11 +196,16 @@ function PlaceAutocomplete({
 }
 
 export default function RoutePlanner({ stations, onApplyToMap, onSelectStation }: RoutePlannerProps) {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const hydratedFromUrlRef = useRef(false);
+  const urlSyncTimerRef = useRef<number | null>(null);
+  const lastSerializedParamsRef = useRef<string>("");
+
   const [routeMode, setRouteMode] = useState<"preset" | "custom">("preset");
   const [templateId, setTemplateId] = useState(CYPRUS_ROUTE_TEMPLATES[0]?.id ?? "limassol-paphos");
   const [origin, setOrigin] = useState<PlaceValue>(null);
   const [destination, setDestination] = useState<PlaceValue>(null);
-  const [via, setVia] = useState<PlaceValue>(null);
+  const [vias, setVias] = useState<PlaceValue[]>([]);
   const [currentSocPct, setCurrentSocPct] = useState("55");
   const [batteryKwh, setBatteryKwh] = useState("60");
   const [consumption, setConsumption] = useState("18");
@@ -167,18 +219,58 @@ export default function RoutePlanner({ stations, onApplyToMap, onSelectStation }
   const [useLiveRouting, setUseLiveRouting] = useState(true);
   const [routingStatus, setRoutingStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
   const [routedPath, setRoutedPath] = useState<RoutedPath | null>(null);
+  const [copiedLink, setCopiedLink] = useState(false);
 
   const selectedTemplate = useMemo(
     () => CYPRUS_ROUTE_TEMPLATES.find((t) => t.id === templateId) ?? CYPRUS_ROUTE_TEMPLATES[0],
     [templateId]
   );
 
+  useEffect(() => {
+    if (hydratedFromUrlRef.current) return;
+    hydratedFromUrlRef.current = true;
+
+    const rm = searchParams.get("rm");
+    const mode = rm === "c" ? "custom" : rm === "p" ? "preset" : null;
+    if (mode) setRouteMode(mode);
+
+    const tid = searchParams.get("tid");
+    if (tid) setTemplateId(tid);
+
+    setOrigin(decodePlace(searchParams.get("o")));
+    setDestination(decodePlace(searchParams.get("d")));
+    setVias(decodePlaces(searchParams.get("v")));
+
+    const soc = searchParams.get("soc");
+    if (soc) setCurrentSocPct(soc);
+    const bat = searchParams.get("bat");
+    if (bat) setBatteryKwh(bat);
+    const cons = searchParams.get("cons");
+    if (cons) setConsumption(cons);
+    const arr = searchParams.get("arr");
+    if (arr) setArrivalSocPct(arr);
+    const to = searchParams.get("to");
+    if (to) setPreferredChargeTo(to);
+    const vmax = searchParams.get("vmax");
+    if (vmax) setVehicleMaxKw(vmax);
+    const corr = searchParams.get("corr");
+    if (corr) setCorridorKm(corr);
+    const stops = searchParams.get("stops");
+    if (stops) setMaxStops(stops);
+
+    const fast = searchParams.get("fast");
+    if (fast) setFastOnly(fast === "1");
+    const avail = searchParams.get("avail");
+    if (avail) setAvailableOnly(avail === "1");
+    const live = searchParams.get("live");
+    if (live) setUseLiveRouting(live === "1");
+  }, [searchParams]);
+
   const customTemplate = useMemo(() => {
     if (!origin || !destination) return null;
     const name = `${origin.label} → ${destination.label}`;
-    const polyline: [number, number][] = via
-      ? [origin.coordinates, via.coordinates, destination.coordinates]
-      : [origin.coordinates, destination.coordinates];
+    const viaCoords = vias.map((v) => v?.coordinates).filter((c): c is [number, number] => Boolean(c));
+    const polyline: [number, number][] = [origin.coordinates, ...viaCoords, destination.coordinates];
     return {
       id: "custom",
       name,
@@ -187,7 +279,7 @@ export default function RoutePlanner({ stations, onApplyToMap, onSelectStation }
       end: { id: "destination", label: destination.label, coordinates: destination.coordinates },
       polyline
     } as const;
-  }, [origin, destination, via]);
+  }, [origin, destination, vias]);
 
   const routeWaypoints = useMemo(() => {
     if (routeMode === "custom") {
@@ -225,6 +317,67 @@ export default function RoutePlanner({ stations, onApplyToMap, onSelectStation }
       cancelled = true;
     };
   }, [routeWaypoints, useLiveRouting]);
+
+  useEffect(() => {
+    // Keep URL shareable (debounced + replace to avoid history spam).
+    if (!hydratedFromUrlRef.current) return;
+    if (urlSyncTimerRef.current) window.clearTimeout(urlSyncTimerRef.current);
+
+    urlSyncTimerRef.current = window.setTimeout(() => {
+      const next = new URLSearchParams();
+      next.set("rm", routeMode === "custom" ? "c" : "p");
+      next.set("tid", templateId);
+
+      const o = encodePlace(origin);
+      const d = encodePlace(destination);
+      const v = encodePlaces(vias);
+      if (routeMode === "custom") {
+        if (o) next.set("o", o);
+        if (d) next.set("d", d);
+        if (v) next.set("v", v);
+      }
+
+      next.set("soc", currentSocPct);
+      next.set("bat", batteryKwh);
+      next.set("cons", consumption);
+      next.set("arr", arrivalSocPct);
+      next.set("to", preferredChargeTo);
+      next.set("vmax", vehicleMaxKw);
+      next.set("corr", corridorKm);
+      next.set("stops", maxStops);
+
+      next.set("fast", fastOnly ? "1" : "0");
+      next.set("avail", availableOnly ? "1" : "0");
+      next.set("live", useLiveRouting ? "1" : "0");
+
+      const serialized = next.toString();
+      if (serialized === lastSerializedParamsRef.current) return;
+      lastSerializedParamsRef.current = serialized;
+      setSearchParams(next, { replace: true });
+    }, 450);
+
+    return () => {
+      if (urlSyncTimerRef.current) window.clearTimeout(urlSyncTimerRef.current);
+    };
+  }, [
+    setSearchParams,
+    routeMode,
+    templateId,
+    origin,
+    destination,
+    vias,
+    currentSocPct,
+    batteryKwh,
+    consumption,
+    arrivalSocPct,
+    preferredChargeTo,
+    vehicleMaxKw,
+    corridorKm,
+    maxStops,
+    fastOnly,
+    availableOnly,
+    useLiveRouting
+  ]);
 
   const result: RoutePlanResult = useMemo(() => {
     const routePolyline = routedPath?.polyline;
@@ -267,6 +420,12 @@ export default function RoutePlanner({ stations, onApplyToMap, onSelectStation }
   ]);
 
   const template = result.template;
+  type NavigatorShare = Navigator & { share: (data: ShareData) => Promise<void> };
+  type NavigatorClipboard = Navigator & { clipboard: { writeText: (text: string) => Promise<void> } };
+  const canShare =
+    typeof navigator !== "undefined" && typeof (navigator as Partial<NavigatorShare>).share === "function";
+  const canCopyLink =
+    typeof navigator !== "undefined" && typeof (navigator as Partial<NavigatorClipboard>).clipboard?.writeText === "function";
 
   return (
     <Card className="shadow-soft">
@@ -349,6 +508,7 @@ export default function RoutePlanner({ stations, onApplyToMap, onSelectStation }
                       const a = origin;
                       setOrigin(destination);
                       setDestination(a);
+                      setVias((prev) => [...prev].reverse());
                     }}
                   >
                     <ArrowRightLeft className="h-4 w-4" />
@@ -363,12 +523,82 @@ export default function RoutePlanner({ stations, onApplyToMap, onSelectStation }
                   onChange={setDestination}
                 />
 
-                <PlaceAutocomplete
-                  label="Via (προαιρετικό)"
-                  placeholder="π.χ. Troodos"
-                  value={via}
-                  onChange={setVia}
-                />
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between gap-3">
+                    <label className="text-xs text-muted-foreground">Stops (via)</label>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setVias((prev) => (prev.length >= 3 ? prev : [...prev, null]))}
+                      disabled={vias.length >= 3}
+                    >
+                      Add stop
+                    </Button>
+                  </div>
+
+                  <div className="space-y-3">
+                    {vias.map((v, idx) => (
+                      <div key={idx} className="rounded-lg border p-3">
+                        <div className="flex items-start justify-between gap-2">
+                          <PlaceAutocomplete
+                            label={`Stop ${idx + 1}`}
+                            placeholder="π.χ. Troodos, Larnaca…"
+                            value={v}
+                            onChange={(next) =>
+                              setVias((prev) => prev.map((item, i) => (i === idx ? next : item)))
+                            }
+                          />
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="icon"
+                            aria-label="Remove stop"
+                            onClick={() => setVias((prev) => prev.filter((_, i) => i !== idx))}
+                          >
+                            <X className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {origin && destination ? (
+                    <div className="rounded-lg border bg-muted/20 p-3">
+                      <p className="text-xs text-muted-foreground mb-2">Suggested stops (touristic)</p>
+                      <div className="flex flex-wrap gap-2">
+                        {CYPRUS_PLACES.filter((p) => {
+                          const o = origin.coordinates;
+                          const d = destination.coordinates;
+                          const nearOrigin = haversineDistanceKm(p.coordinates, o) < 2;
+                          const nearDest = haversineDistanceKm(p.coordinates, d) < 2;
+                          const already = vias.some(
+                            (x) =>
+                              x &&
+                              haversineDistanceKm(x.coordinates, p.coordinates) < 0.2
+                          );
+                          return !nearOrigin && !nearDest && !already;
+                        })
+                          .filter((p) => ["Τρόοδος", "Λάρνακα", "Λεμεσός", "Πάφος", "Λευκωσία", "Αγία Νάπα", "Πόλις Χρυσοχούς"].includes(p.label))
+                          .slice(0, 6)
+                          .map((p) => (
+                            <Button
+                              key={p.id}
+                              type="button"
+                              size="sm"
+                              variant="secondary"
+                              onClick={() => setVias((prev) => (prev.length >= 3 ? prev : [...prev, { label: p.label, coordinates: p.coordinates }]))}
+                            >
+                              {p.label}
+                            </Button>
+                          ))}
+                      </div>
+                      <p className="mt-2 text-[0.7rem] text-muted-foreground">
+                        Tip: πρόσθεσε stop για “tourist route” ή για να αυξήσεις πιθανότητες να βρεις fast charger στο δρόμο.
+                      </p>
+                    </div>
+                  ) : null}
+                </div>
               </div>
             )}
 
@@ -503,7 +733,7 @@ export default function RoutePlanner({ stations, onApplyToMap, onSelectStation }
                 className="gap-2"
                 onClick={() =>
                   onApplyToMap?.({
-                    templateId,
+                    templateId: routeMode === "custom" ? "custom" : templateId,
                     polyline: result.polyline,
                     suggestedStopStationIds: result.suggestedStopStationIds
                   })
@@ -511,6 +741,46 @@ export default function RoutePlanner({ stations, onApplyToMap, onSelectStation }
               >
                 Apply to map
               </Button>
+              <Button
+                type="button"
+                variant="outline"
+                className="gap-2"
+                onClick={async () => {
+                  try {
+                    if (!canCopyLink) return;
+                    await (navigator as NavigatorClipboard).clipboard.writeText(window.location.href);
+                    setCopiedLink(true);
+                    window.setTimeout(() => setCopiedLink(false), 1200);
+                  } catch {
+                    // ignore
+                  }
+                }}
+                disabled={!canCopyLink}
+              >
+                <Link2 className="h-4 w-4" />
+                {copiedLink ? "Copied" : "Copy link"}
+              </Button>
+              {canShare ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="gap-2"
+                  onClick={async () => {
+                    try {
+                      await (navigator as NavigatorShare).share({
+                        title: "ChargeCyprus route plan",
+                        text: "Route-aware charging plan",
+                        url: window.location.href
+                      });
+                    } catch {
+                      // ignore
+                    }
+                  }}
+                >
+                  <Share2 className="h-4 w-4" />
+                  Share
+                </Button>
+              ) : null}
             </div>
           </div>
 
