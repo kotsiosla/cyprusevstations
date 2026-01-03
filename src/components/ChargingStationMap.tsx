@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
-import { Crosshair, Home, SlidersHorizontal, ZoomIn, ZoomOut } from "lucide-react";
+import { Crosshair, Home, Search, SlidersHorizontal, X, ZoomIn, ZoomOut } from "lucide-react";
 import { ChargingStation } from "@/lib/chargingStations";
 import type { FeatureCollection, Feature, LineString, Point } from "geojson";
+import { Input } from "@/components/ui/input";
 
 interface ChargingStationMapProps {
   stations: ChargingStation[];
@@ -41,6 +42,80 @@ export default function ChargingStationMap({
   const userMarkerRef = useRef<maplibregl.Marker | null>(null);
   const stationsRef = useRef<ChargingStation[]>(stations);
   const [showStations, setShowStations] = useState(true);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+
+  const smartSearchResults = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return [];
+
+    const parseNumber = () => {
+      const m = q.match(/(\d+(?:\.\d+)?)/);
+      if (!m) return null;
+      const n = Number(m[1]);
+      return Number.isFinite(n) ? n : null;
+    };
+    const numberToken = parseNumber();
+
+    const normalize = (s?: string) => (s ?? "").toLowerCase();
+    const scoreStation = (s: ChargingStation) => {
+      const name = normalize(s.name);
+      const city = normalize(s.city);
+      const addr = normalize(s.address);
+      const operator = normalize(s.operator);
+      const connectors = (s.connectors ?? []).map(normalize);
+
+      let score = 0;
+      if (name.startsWith(q)) score += 60;
+      else if (name.includes(q)) score += 35;
+      if (city.includes(q)) score += 18;
+      if (addr.includes(q)) score += 14;
+      if (operator.includes(q)) score += 10;
+      if (connectors.some((c) => c.includes(q))) score += 18;
+
+      if (q.includes("ccs") && connectors.some((c) => c.includes("ccs"))) score += 12;
+      if (q.includes("type 2") && connectors.some((c) => c.includes("type 2"))) score += 12;
+      if (q.includes("chademo") && connectors.some((c) => c.includes("chademo"))) score += 12;
+
+      if (numberToken !== null) {
+        const powerText = s.power ?? "";
+        const match = powerText.match(/([\d.]+)/);
+        const powerKw = match ? Number(match[1]) : null;
+        if (powerKw && Number.isFinite(powerKw) && powerKw >= numberToken) score += 10;
+      }
+      return score;
+    };
+
+    const haversineKm = (from: [number, number], to: [number, number]) => {
+      const toRad = (value: number) => (value * Math.PI) / 180;
+      const [fromLng, fromLat] = from;
+      const [toLng, toLat] = to;
+      const earthRadiusKm = 6371;
+      const dLat = toRad(toLat - fromLat);
+      const dLng = toRad(toLng - fromLng);
+      const a =
+        Math.sin(dLat / 2) ** 2 +
+        Math.cos(toRad(fromLat)) * Math.cos(toRad(toLat)) * Math.sin(dLng / 2) ** 2;
+      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+      return earthRadiusKm * c;
+    };
+
+    const results = stations
+      .map((s) => ({
+        station: s,
+        score: scoreStation(s),
+        distanceKm: userLocation ? haversineKm(userLocation, s.coordinates) : null
+      }))
+      .filter((x) => x.score > 0)
+      .sort((a, b) => {
+        if (b.score !== a.score) return b.score - a.score;
+        if (a.distanceKm !== null && b.distanceKm !== null) return a.distanceKm - b.distanceKm;
+        return a.station.name.localeCompare(b.station.name);
+      })
+      .slice(0, 10);
+
+    return results;
+  }, [searchQuery, stations, userLocation]);
 
   const routeLineGeoJson = useMemo(() => {
     if (!routePolyline || routePolyline.length < 2) {
@@ -546,6 +621,14 @@ export default function ChargingStationMap({
       <div className="absolute top-4 right-4 z-10 flex flex-col gap-2">
         <button
           type="button"
+          onClick={() => setSearchOpen((prev) => !prev)}
+          className="rounded-full border bg-background/90 p-2 shadow-soft backdrop-blur transition hover:bg-background"
+          aria-label={searchOpen ? "Close search" : "Find a charging station"}
+        >
+          {searchOpen ? <X className="h-4 w-4" /> : <Search className="h-4 w-4" />}
+        </button>
+        <button
+          type="button"
           onClick={() => setShowStations((prev) => !prev)}
           className="rounded-full border bg-background/90 p-2 shadow-soft backdrop-blur transition hover:bg-background"
           aria-label={showStations ? "Hide stations" : "Show stations"}
@@ -585,6 +668,63 @@ export default function ChargingStationMap({
           <ZoomOut className="h-4 w-4" />
         </button>
       </div>
+
+      {searchOpen ? (
+        <div className="absolute top-4 right-16 z-20 w-[320px] max-w-[calc(100%-5rem)] rounded-xl border bg-background/95 p-3 shadow-soft backdrop-blur">
+          <div className="flex items-center justify-between gap-2 mb-2">
+            <p className="text-sm font-medium">Find a charger</p>
+            <button
+              type="button"
+              className="rounded-md p-1 hover:bg-muted"
+              aria-label="Close search"
+              onClick={() => setSearchOpen(false)}
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+          <Input
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder='Search "Nicosia", "CCS", "50kW"...'
+            autoComplete="off"
+            onKeyDown={(e) => {
+              if (e.key === "Escape") setSearchOpen(false);
+              if (e.key === "Enter") {
+                const first = smartSearchResults[0]?.station;
+                if (first) {
+                  onStationSelect?.(first);
+                  setSearchOpen(false);
+                }
+              }
+            }}
+          />
+          <div className="mt-2 max-h-[260px] overflow-y-auto">
+            {searchQuery.trim() && smartSearchResults.length === 0 ? (
+              <div className="px-1 py-2 text-xs text-muted-foreground">No matches. Try city, connector, or kW.</div>
+            ) : null}
+            <div className="flex flex-col gap-1">
+              {smartSearchResults.map(({ station, distanceKm }) => (
+                <button
+                  key={station.id}
+                  type="button"
+                  className="w-full text-left rounded-md px-2 py-2 hover:bg-muted transition"
+                  onClick={() => {
+                    onStationSelect?.(station);
+                    setSearchOpen(false);
+                  }}
+                >
+                  <div className="text-sm font-medium truncate">{station.name}</div>
+                  <div className="text-xs text-muted-foreground truncate">
+                    {(station.city || station.address || "Cyprus") +
+                      (station.power ? ` · ${station.power}` : "") +
+                      (distanceKm !== null ? ` · ${distanceKm.toFixed(1)} km` : "")}
+                  </div>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {/* Map Legend */}
       <div className="absolute bottom-4 left-4 bg-background/95 backdrop-blur-sm rounded-lg border shadow-soft p-3 z-10">
