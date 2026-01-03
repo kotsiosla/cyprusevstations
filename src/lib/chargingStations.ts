@@ -56,6 +56,12 @@ export interface ChargingStation {
   distanceKm?: number;
   distanceLabel?: string;
   coordinates: [number, number];
+  // Optional user-submitted metadata (when admin approves suggestions)
+  isUserSuggested?: boolean;
+  suggestionId?: string;
+  suggestionNotes?: string;
+  suggestionPhotoDataUrl?: string;
+  suggestionCreatedAt?: number;
 }
 
 function cyprusChargingOverpassQuery() {

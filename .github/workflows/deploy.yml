@@ -28,6 +28,8 @@ jobs:
           # Prefer setting VITE_OPENCHARGEMAP_PROXY_URL to a serverless proxy instead of exposing an API key.
           VITE_OPENCHARGEMAP_API_KEY: ${{ secrets.VITE_OPENCHARGEMAP_API_KEY }}
           VITE_OPENCHARGEMAP_PROXY_URL: ${{ secrets.VITE_OPENCHARGEMAP_PROXY_URL }}
+          # Public webhook endpoint (e.g. Formspree) used to notify admin via email.
+          VITE_ADMIN_NOTIFY_ENDPOINT: ${{ secrets.VITE_ADMIN_NOTIFY_ENDPOINT }}
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist
