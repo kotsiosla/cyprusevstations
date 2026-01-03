@@ -5,7 +5,7 @@ import StatsSection from '@/components/StatsSection';
 import ChargingStationMap from '@/components/ChargingStationMap';
 import ChargingStationList from '@/components/ChargingStationList';
 import { fetchChargingStations, sampleChargingStations, ChargingStation } from '@/lib/chargingStations';
-import { fetchOpenChargeMapDetailsByCoords } from '@/lib/openChargeMap';
+import { fetchOpenChargeMapDetailsByCoords, parseOpenChargeMapUsageCost } from '@/lib/openChargeMap';
 import { Helmet } from 'react-helmet-async';
 import { BatteryCharging, Heart, MapPin, Navigation } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -26,6 +26,14 @@ const Index = () => {
   const [availabilityFilter, setAvailabilityFilter] = useState('all');
   const [openNowOnly, setOpenNowOnly] = useState(false);
   const [fastOnly, setFastOnly] = useState(false);
+  const [cheapestRadiusKm, setCheapestRadiusKm] = useState('10');
+  const [cheapestMode, setCheapestMode] = useState<'any' | 'ac' | 'dc'>('any');
+  const [cheapestPending, setCheapestPending] = useState(false);
+  const [cheapestResult, setCheapestResult] = useState<{
+    station: ChargingStation;
+    rate: number;
+    mode: 'any' | 'ac' | 'dc';
+  } | null>(null);
 
   useEffect(() => {
     const loadStations = async () => {
@@ -177,6 +185,58 @@ const Index = () => {
     );
   };
 
+  const findCheapestNearby = () => {
+    if (locationStatus === 'loading') return;
+    if (!userLocation) {
+      setCheapestPending(true);
+      requestLocation();
+      return;
+    }
+
+    const radius = Number(cheapestRadiusKm);
+    const radiusKm = Number.isFinite(radius) && radius > 0 ? radius : 10;
+
+    const candidates = filteredStations.filter((station) => {
+      const distanceKm =
+        typeof station.distanceKm === 'number'
+          ? station.distanceKm
+          : haversineDistanceKm(userLocation, station.coordinates);
+      return distanceKm <= radiusKm;
+    });
+
+    const pickRate = (station: ChargingStation): number | null => {
+      const rates = parseOpenChargeMapUsageCost(station.ocm?.usageCost);
+      if (rates.isFree) return 0;
+      if (cheapestMode === 'ac' && typeof rates.ac === 'number') return rates.ac;
+      if (cheapestMode === 'dc' && typeof rates.dc === 'number') return rates.dc;
+      if (typeof rates.min === 'number') return rates.min;
+      return null;
+    };
+
+    let best: { station: ChargingStation; rate: number } | null = null;
+    for (const station of candidates) {
+      const rate = pickRate(station);
+      if (rate === null) continue;
+      if (!best || rate < best.rate) best = { station, rate };
+    }
+
+    if (!best) {
+      setCheapestResult(null);
+      return;
+    }
+
+    setCheapestResult({ station: best.station, rate: best.rate, mode: cheapestMode });
+    setSelectedStation(best.station);
+  };
+
+  useEffect(() => {
+    if (!cheapestPending) return;
+    if (!userLocation) return;
+    setCheapestPending(false);
+    findCheapestNearby();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cheapestPending, userLocation]);
+
   return (
     <>
       <Helmet>
@@ -236,6 +296,71 @@ const Index = () => {
                   )}
                 </div>
               </div>
+
+              <div className="mb-6 flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4 rounded-xl border bg-background p-4 shadow-soft">
+                <div className="flex flex-col gap-1">
+                  <p className="text-sm font-medium">Find the cheapest nearby</p>
+                  <p className="text-xs text-muted-foreground">
+                    Uses your current filters and OpenChargeMap cost data.
+                  </p>
+                </div>
+                <div className="flex flex-col sm:flex-row gap-2 w-full lg:w-auto">
+                  <Select value={cheapestRadiusKm} onValueChange={setCheapestRadiusKm}>
+                    <SelectTrigger className="w-full sm:w-[140px]">
+                      <SelectValue placeholder="Radius" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="5">Within 5 km</SelectItem>
+                      <SelectItem value="10">Within 10 km</SelectItem>
+                      <SelectItem value="25">Within 25 km</SelectItem>
+                      <SelectItem value="50">Within 50 km</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <Select value={cheapestMode} onValueChange={(value) => setCheapestMode(value as any)}>
+                    <SelectTrigger className="w-full sm:w-[140px]">
+                      <SelectValue placeholder="AC/DC" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="any">Any</SelectItem>
+                      <SelectItem value="ac">AC</SelectItem>
+                      <SelectItem value="dc">DC</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <Button
+                    variant="secondary"
+                    className="gap-2"
+                    onClick={findCheapestNearby}
+                    disabled={locationStatus === 'loading'}
+                  >
+                    Find cheapest
+                  </Button>
+                </div>
+              </div>
+
+              {cheapestResult && (
+                <div className="mb-6 rounded-xl border bg-muted/30 p-4">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div>
+                      <p className="text-xs text-muted-foreground">Cheapest match</p>
+                      <p className="font-display font-semibold">{cheapestResult.station.name}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {cheapestResult.station.distanceLabel
+                          ? `${cheapestResult.station.distanceLabel} away · `
+                          : ''}
+                        {cheapestResult.mode.toUpperCase()} · {cheapestResult.rate.toFixed(2)}
+                      </p>
+                    </div>
+                    <Button
+                      variant="secondary"
+                      className="gap-2"
+                      onClick={() => setSelectedStation(cheapestResult.station)}
+                    >
+                      <MapPin className="w-4 h-4" />
+                      View on map
+                    </Button>
+                  </div>
+                </div>
+              )}
 
               {locationStatus === 'denied' && (
                 <div className="mb-6 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-700">
