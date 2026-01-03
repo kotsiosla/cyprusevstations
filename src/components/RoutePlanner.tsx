@@ -159,22 +159,25 @@ function PlaceAutocomplete({
         {leadingAction ? <div className="shrink-0">{leadingAction}</div> : null}
         <Popover open={open} onOpenChange={setOpen}>
           <PopoverTrigger asChild>
-            <div className="w-full">
-              <Input
-                value={query}
-                placeholder={placeholder}
-                onChange={(e) => {
-                  setQuery(e.target.value);
-                  // keep current selection until user picks a result or clears
-                  if (value) onChange(null);
-                }}
-                onFocus={() => setOpen(true)}
-              />
-            </div>
+            <Input
+              value={query}
+              placeholder={placeholder}
+              onChange={(e) => {
+                setQuery(e.target.value);
+                // keep current selection until user picks a result or clears
+                if (value) onChange(null);
+              }}
+              onFocus={() => setOpen(true)}
+            />
           </PopoverTrigger>
-          <PopoverContent className="p-0 w-[--radix-popover-trigger-width]" align="start">
+          <PopoverContent
+            className="p-0 w-[--radix-popover-trigger-width]"
+            align="start"
+            // Keep focus on the input so you can keep typing.
+            onOpenAutoFocus={(event) => event.preventDefault()}
+            onCloseAutoFocus={(event) => event.preventDefault()}
+          >
             <Command>
-              <CommandInput placeholder="Search in Cyprus…" value={query} onValueChange={setQuery} />
               <CommandList>
                 <CommandEmpty>
                   {status === "loading" ? "Searching…" : "No results. Try a city, hotel, POI…"}
