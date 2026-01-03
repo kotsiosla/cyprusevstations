@@ -43,7 +43,7 @@ import {
   X
 } from "lucide-react";
 import { Popover, PopoverAnchor, PopoverContent } from "@/components/ui/popover";
-import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
+// Note: Avoid cmdk/Command here because it can capture key events and block typing in the input on some devices.
 import { Collapsible, CollapsibleContent } from "@/components/ui/collapsible";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { toast } from "@/components/ui/sonner";
@@ -165,11 +165,17 @@ function PlaceAutocomplete({
               placeholder={placeholder}
               onChange={(e) => {
                 setQuery(e.target.value);
-                if (!open) setOpen(true);
+                const next = e.target.value;
+                if (next.trim().length >= 3) setOpen(true);
                 // keep current selection until user picks a result or clears
                 if (value) onChange(null);
               }}
-              onFocus={() => setOpen(true)}
+              onFocus={() => {
+                if (query.trim().length >= 3) setOpen(true);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Escape") setOpen(false);
+              }}
             />
           </PopoverAnchor>
           <PopoverContent
@@ -179,28 +185,36 @@ function PlaceAutocomplete({
             onOpenAutoFocus={(event) => event.preventDefault()}
             onCloseAutoFocus={(event) => event.preventDefault()}
           >
-            <Command>
-              <CommandList>
-                <CommandEmpty>
-                  {status === "loading" ? "Searching…" : "No results. Try a city, hotel, POI…"}
-                </CommandEmpty>
-                <CommandGroup>
+            <div className="max-h-[280px] overflow-y-auto p-1">
+              {query.trim().length < 3 ? (
+                <div className="px-3 py-2 text-sm text-muted-foreground">Type at least 3 characters…</div>
+              ) : status === "loading" ? (
+                <div className="px-3 py-2 text-sm text-muted-foreground">Searching…</div>
+              ) : items.length === 0 ? (
+                <div className="px-3 py-2 text-sm text-muted-foreground">No results. Try a city, hotel, POI…</div>
+              ) : (
+                <div role="listbox" aria-label="Search results" className="grid">
                   {items.map((item) => (
-                    <CommandItem
+                    <button
                       key={item.id}
-                      value={item.label}
-                      onSelect={() => {
+                      type="button"
+                      className="w-full text-left rounded-sm px-3 py-2 text-sm hover:bg-accent hover:text-accent-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                      onMouseDown={(e) => {
+                        // Keep focus on the input (prevents blur-before-click issues).
+                        e.preventDefault();
+                      }}
+                      onClick={() => {
                         onChange({ label: item.label, coordinates: item.coordinates });
                         setQuery(item.label);
                         setOpen(false);
                       }}
                     >
-                      <span className="text-sm">{item.label}</span>
-                    </CommandItem>
+                      {item.label}
+                    </button>
                   ))}
-                </CommandGroup>
-              </CommandList>
-            </Command>
+                </div>
+              )}
+            </div>
           </PopoverContent>
         </Popover>
         {value ? (
