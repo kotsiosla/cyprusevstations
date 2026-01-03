@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import type { ChargingStation } from "@/lib/chargingStations";
 import {
   CYPRUS_ROUTE_TEMPLATES,
@@ -6,6 +6,7 @@ import {
   type RoutePlanResult
 } from "@/lib/routePlanner";
 import { fetchOsrmRoute, type RoutedPath } from "@/lib/routing";
+import { searchCyprusPlaces, type GeocodedPlace } from "@/lib/geocoding";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -13,7 +14,9 @@ import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
-import { BatteryCharging, Route, Zap, AlertTriangle, CheckCircle2, Clock } from "lucide-react";
+import { BatteryCharging, Route, Zap, AlertTriangle, CheckCircle2, Clock, LocateFixed, ArrowRightLeft, X } from "lucide-react";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 
 type RoutePlannerProps = {
   stations: ChargingStation[];
@@ -30,8 +33,127 @@ const numberOr = (value: string, fallback: number) => {
   return Number.isFinite(n) ? n : fallback;
 };
 
+type PlaceValue = { label: string; coordinates: [number, number] } | null;
+
+function PlaceAutocomplete({
+  label,
+  placeholder,
+  value,
+  onChange,
+  leadingAction
+}: {
+  label: string;
+  placeholder: string;
+  value: PlaceValue;
+  onChange: (next: PlaceValue) => void;
+  leadingAction?: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState(value?.label ?? "");
+  const [items, setItems] = useState<GeocodedPlace[]>([]);
+  const [status, setStatus] = useState<"idle" | "loading" | "ready">("idle");
+  const debounceRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    setQuery(value?.label ?? "");
+  }, [value?.label]);
+
+  useEffect(() => {
+    if (!open) return;
+    const q = query.trim();
+    if (debounceRef.current) window.clearTimeout(debounceRef.current);
+    if (q.length < 3) {
+      setItems([]);
+      setStatus("idle");
+      return;
+    }
+    debounceRef.current = window.setTimeout(async () => {
+      setStatus("loading");
+      const res = await searchCyprusPlaces(q, 7);
+      setItems(res);
+      setStatus("ready");
+    }, 350);
+    return () => {
+      if (debounceRef.current) window.clearTimeout(debounceRef.current);
+    };
+  }, [query, open]);
+
+  return (
+    <div className="space-y-1">
+      <label className="text-xs text-muted-foreground">{label}</label>
+      <div className="flex gap-2">
+        {leadingAction ? <div className="shrink-0">{leadingAction}</div> : null}
+        <Popover open={open} onOpenChange={setOpen}>
+          <PopoverTrigger asChild>
+            <div className="w-full">
+              <Input
+                value={query}
+                placeholder={placeholder}
+                onChange={(e) => {
+                  setQuery(e.target.value);
+                  // keep current selection until user picks a result or clears
+                  if (value) onChange(null);
+                }}
+                onFocus={() => setOpen(true)}
+              />
+            </div>
+          </PopoverTrigger>
+          <PopoverContent className="p-0 w-[--radix-popover-trigger-width]" align="start">
+            <Command>
+              <CommandInput placeholder="Search in Cyprus…" value={query} onValueChange={setQuery} />
+              <CommandList>
+                <CommandEmpty>
+                  {status === "loading" ? "Searching…" : "No results. Try a city, hotel, POI…"}
+                </CommandEmpty>
+                <CommandGroup>
+                  {items.map((item) => (
+                    <CommandItem
+                      key={item.id}
+                      value={item.label}
+                      onSelect={() => {
+                        onChange({ label: item.label, coordinates: item.coordinates });
+                        setQuery(item.label);
+                        setOpen(false);
+                      }}
+                    >
+                      <span className="text-sm">{item.label}</span>
+                    </CommandItem>
+                  ))}
+                </CommandGroup>
+              </CommandList>
+            </Command>
+          </PopoverContent>
+        </Popover>
+        {value ? (
+          <Button
+            type="button"
+            variant="outline"
+            size="icon"
+            aria-label="Clear"
+            onClick={() => {
+              onChange(null);
+              setQuery("");
+            }}
+          >
+            <X className="h-4 w-4" />
+          </Button>
+        ) : null}
+      </div>
+      {value ? (
+        <p className="text-[0.7rem] text-muted-foreground">
+          Selected · {value.coordinates[1].toFixed(4)}, {value.coordinates[0].toFixed(4)}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
 export default function RoutePlanner({ stations, onApplyToMap, onSelectStation }: RoutePlannerProps) {
+  const [routeMode, setRouteMode] = useState<"preset" | "custom">("preset");
   const [templateId, setTemplateId] = useState(CYPRUS_ROUTE_TEMPLATES[0]?.id ?? "limassol-paphos");
+  const [origin, setOrigin] = useState<PlaceValue>(null);
+  const [destination, setDestination] = useState<PlaceValue>(null);
+  const [via, setVia] = useState<PlaceValue>(null);
   const [currentSocPct, setCurrentSocPct] = useState("55");
   const [batteryKwh, setBatteryKwh] = useState("60");
   const [consumption, setConsumption] = useState("18");
@@ -51,6 +173,29 @@ export default function RoutePlanner({ stations, onApplyToMap, onSelectStation }
     [templateId]
   );
 
+  const customTemplate = useMemo(() => {
+    if (!origin || !destination) return null;
+    const name = `${origin.label} → ${destination.label}`;
+    const polyline: [number, number][] = via
+      ? [origin.coordinates, via.coordinates, destination.coordinates]
+      : [origin.coordinates, destination.coordinates];
+    return {
+      id: "custom",
+      name,
+      description: "Custom route (Cyprus geocoding)",
+      start: { id: "origin", label: origin.label, coordinates: origin.coordinates },
+      end: { id: "destination", label: destination.label, coordinates: destination.coordinates },
+      polyline
+    } as const;
+  }, [origin, destination, via]);
+
+  const routeWaypoints = useMemo(() => {
+    if (routeMode === "custom") {
+      return customTemplate?.polyline ?? null;
+    }
+    return selectedTemplate?.polyline ?? null;
+  }, [routeMode, customTemplate, selectedTemplate]);
+
   useEffect(() => {
     let cancelled = false;
     const run = async () => {
@@ -59,8 +204,13 @@ export default function RoutePlanner({ stations, onApplyToMap, onSelectStation }
         setRoutingStatus("idle");
         return;
       }
+      if (!routeWaypoints || routeWaypoints.length < 2) {
+        setRoutedPath(null);
+        setRoutingStatus("idle");
+        return;
+      }
       setRoutingStatus("loading");
-      const res = await fetchOsrmRoute(selectedTemplate.polyline);
+      const res = await fetchOsrmRoute(routeWaypoints);
       if (cancelled) return;
       if (res) {
         setRoutedPath(res);
@@ -74,14 +224,16 @@ export default function RoutePlanner({ stations, onApplyToMap, onSelectStation }
     return () => {
       cancelled = true;
     };
-  }, [selectedTemplate, useLiveRouting]);
+  }, [routeWaypoints, useLiveRouting]);
 
   const result: RoutePlanResult = useMemo(() => {
     const routePolyline = routedPath?.polyline;
     const routeDistanceKm = routedPath?.distanceKm;
     const routeDurationMin = routedPath?.durationMin;
+    const effectiveTemplateId = routeMode === "custom" ? "custom" : templateId;
     return planRouteAwareCharging(stations, {
-      templateId,
+      templateId: effectiveTemplateId,
+      templateOverride: routeMode === "custom" ? (customTemplate ?? undefined) : undefined,
       currentSocPct: numberOr(currentSocPct, 55),
       batteryKwh: numberOr(batteryKwh, 60),
       consumptionKwhPer100Km: numberOr(consumption, 18),
@@ -99,6 +251,8 @@ export default function RoutePlanner({ stations, onApplyToMap, onSelectStation }
   }, [
     stations,
     templateId,
+    routeMode,
+    customTemplate,
     currentSocPct,
     batteryKwh,
     consumption,
@@ -131,18 +285,93 @@ export default function RoutePlanner({ stations, onApplyToMap, onSelectStation }
         <div className="grid gap-4 lg:grid-cols-3">
           <div className="space-y-2 lg:col-span-1">
             <p className="text-xs font-medium text-muted-foreground">Διαδρομή</p>
-            <Select value={templateId} onValueChange={setTemplateId}>
+            <Select value={routeMode} onValueChange={(v) => setRouteMode(v as "preset" | "custom")}>
               <SelectTrigger>
-                <SelectValue placeholder="Επίλεξε διαδρομή" />
+                <SelectValue placeholder="Route type" />
               </SelectTrigger>
               <SelectContent>
-                {CYPRUS_ROUTE_TEMPLATES.map((t) => (
-                  <SelectItem key={t.id} value={t.id}>
-                    {t.name}
-                  </SelectItem>
-                ))}
+                <SelectItem value="preset">Presets (Κύπρος)</SelectItem>
+                <SelectItem value="custom">Custom (search)</SelectItem>
               </SelectContent>
             </Select>
+
+            {routeMode === "preset" ? (
+              <Select value={templateId} onValueChange={setTemplateId}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Επίλεξε διαδρομή" />
+                </SelectTrigger>
+                <SelectContent>
+                  {CYPRUS_ROUTE_TEMPLATES.map((t) => (
+                    <SelectItem key={t.id} value={t.id}>
+                      {t.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            ) : (
+              <div className="space-y-3">
+                <PlaceAutocomplete
+                  label="Αφετηρία"
+                  placeholder="π.χ. Limassol, Larnaca Airport…"
+                  value={origin}
+                  onChange={setOrigin}
+                  leadingAction={
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      aria-label="Use my location as origin"
+                      title="Use my location"
+                      onClick={() => {
+                        if (!navigator.geolocation) return;
+                        navigator.geolocation.getCurrentPosition(
+                          (pos) => {
+                            setOrigin({
+                              label: "My location",
+                              coordinates: [pos.coords.longitude, pos.coords.latitude]
+                            });
+                          },
+                          () => {}
+                        );
+                      }}
+                    >
+                      <LocateFixed className="h-4 w-4" />
+                    </Button>
+                  }
+                />
+
+                <div className="flex justify-center">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="gap-2"
+                    onClick={() => {
+                      const a = origin;
+                      setOrigin(destination);
+                      setDestination(a);
+                    }}
+                  >
+                    <ArrowRightLeft className="h-4 w-4" />
+                    Swap
+                  </Button>
+                </div>
+
+                <PlaceAutocomplete
+                  label="Προορισμός"
+                  placeholder="π.χ. Ayia Napa, Paphos Harbour…"
+                  value={destination}
+                  onChange={setDestination}
+                />
+
+                <PlaceAutocomplete
+                  label="Via (προαιρετικό)"
+                  placeholder="π.χ. Troodos"
+                  value={via}
+                  onChange={setVia}
+                />
+              </div>
+            )}
+
             <div className="rounded-lg border bg-muted/20 p-3 text-xs text-muted-foreground">
               <div className="flex flex-wrap items-center gap-2">
                 <Badge variant="secondary">{template.start.label}</Badge>

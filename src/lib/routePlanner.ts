@@ -30,6 +30,7 @@ export type RoutePlanInput = {
   fastOnly: boolean;
   availableOnly: boolean;
   maxStops: number;
+  templateOverride?: RouteTemplate;
   // Optional live routing override (e.g. OSRM).
   routePolyline?: LonLat[];
   routeDistanceKm?: number;
@@ -233,7 +234,7 @@ export function planRouteAwareCharging(
   input: RoutePlanInput,
   templates: RouteTemplate[] = CYPRUS_ROUTE_TEMPLATES
 ): RoutePlanResult {
-  const template = templates.find((t) => t.id === input.templateId) ?? templates[0];
+  const template = input.templateOverride ?? templates.find((t) => t.id === input.templateId) ?? templates[0];
   const warnings: string[] = [];
 
   const batteryKwh = clamp(safeNumber(input.batteryKwh, 60), 10, 200);
