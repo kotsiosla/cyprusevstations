@@ -9,6 +9,17 @@ export type OpenChargeMapDetails = {
   ocmUrl?: string;
 };
 
+export type OpenChargeMapUsageCostRates = {
+  /** Best effort "AC" cost (e.g. €/kWh). */
+  ac?: number;
+  /** Best effort "DC" cost (e.g. €/kWh). */
+  dc?: number;
+  /** Minimum cost found in the string (fallback). */
+  min?: number;
+  /** True when cost is explicitly free/zero. */
+  isFree?: boolean;
+};
+
 export type OpenChargeMapPoi = {
   id: number;
   name: string;
@@ -289,5 +300,56 @@ export async function fetchOpenChargeMapPoisByCountry(countryCode: string): Prom
 
   if (items.length) writeCache(items);
   return items;
+}
+
+function parseNumberToken(raw: string): number | null {
+  const normalized = raw
+    .trim()
+    // convert "0,5" -> "0.5"
+    .replace(/(\d),(\d)/g, "$1.$2")
+    // remove stray currency/unit characters
+    .replace(/[^\d.]/g, "");
+  if (!normalized) return null;
+  const n = Number(normalized);
+  if (!Number.isFinite(n)) return null;
+  return n;
+}
+
+/**
+ * Extract best-effort AC/DC/min numeric prices from an OpenChargeMap `UsageCost` string.
+ *
+ * Examples:
+ * - "AC-0.51, DC-0.64"
+ * - "Cost: 0,5 €/kWh"
+ * - "Free"
+ */
+export function parseOpenChargeMapUsageCost(usageCost?: string): OpenChargeMapUsageCostRates {
+  if (!usageCost || typeof usageCost !== "string") return {};
+  const raw = usageCost.trim();
+  if (!raw) return {};
+
+  const lower = raw.toLowerCase();
+  if (lower.includes("free") || lower.includes("gratis") || lower.includes("no cost")) {
+    return { isFree: true, min: 0, ac: 0, dc: 0 };
+  }
+
+  // Prefer explicit AC/DC mentions.
+  const pickTagged = (tag: "ac" | "dc") => {
+    const re = new RegExp(`${tag}\\s*[:\\-]?\\s*([0-9]+(?:[.,][0-9]+)?)`, "i");
+    const m = raw.match(re);
+    return m?.[1] ? parseNumberToken(m[1]) : null;
+  };
+
+  const ac = pickTagged("ac") ?? undefined;
+  const dc = pickTagged("dc") ?? undefined;
+
+  // Fallback: take all numeric tokens and pick the minimum.
+  const tokens = raw.match(/[0-9]+(?:[.,][0-9]+)?/g) ?? [];
+  const values = tokens
+    .map((t) => parseNumberToken(t))
+    .filter((n): n is number => typeof n === "number" && Number.isFinite(n));
+  const min = values.length ? Math.min(...values) : undefined;
+
+  return { ac, dc, min };
 }
 
