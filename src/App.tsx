@@ -14,7 +14,7 @@ const App = () => (
   <HelmetProvider>
     <ThemeProvider>
       <QueryClientProvider client={queryClient}>
-        <TooltipProvider>
+        <TooltipProvider delayDuration={0}>
           <Toaster />
           <Sonner />
           <BrowserRouter basename={import.meta.env.BASE_URL}>
