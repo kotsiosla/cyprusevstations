@@ -21,7 +21,7 @@ import {
 import { fetchOsrmRoute, type RoutedPath } from "@/lib/routing";
 import { searchCyprusPlaces, type GeocodedPlace } from "@/lib/geocoding";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -940,12 +940,14 @@ export default function RoutePlanner({ stations, onApplyToMap, onSelectStation }
                 Apply to map
               </Button>
               {googleMapsUrl ? (
-                <Button asChild type="button" variant="outline" className="gap-2">
-                  <a href={googleMapsUrl} target="_blank" rel="noopener noreferrer">
-                    <MapIcon className="h-4 w-4" />
-                    Open in Google Maps
-                  </a>
-                </Button>
+                <a
+                  href={googleMapsUrl}
+                  rel="noopener noreferrer"
+                  className={cn(buttonVariants({ variant: "outline", size: "default" }), "gap-2")}
+                >
+                  <MapIcon className="h-4 w-4" />
+                  Open in Google Maps
+                </a>
               ) : null}
               <Button
                 type="button"
