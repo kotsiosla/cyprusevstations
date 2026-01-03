@@ -13,7 +13,12 @@ const Header = () => {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const [isInstallable, setIsInstallable] = useState(false);
+  const [mounted, setMounted] = useState(false);
   const { resolvedTheme, setTheme } = useTheme();
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   const toggleTheme = () => {
     setTheme(resolvedTheme === 'dark' ? 'light' : 'dark');
@@ -89,12 +94,12 @@ const Header = () => {
             size="sm"
             onClick={toggleTheme}
             aria-label="Toggle theme"
-            title={resolvedTheme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+            title={mounted && resolvedTheme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
             className="gap-2"
           >
-            {resolvedTheme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+            {mounted && resolvedTheme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
             <span className="hidden sm:inline">
-              {resolvedTheme === 'dark' ? 'Light mode' : 'Dark mode'}
+              {mounted && resolvedTheme === 'dark' ? 'Light mode' : 'Dark mode'}
             </span>
           </Button>
           <button
@@ -133,8 +138,8 @@ const Header = () => {
               onClick={toggleTheme}
               className="gap-2"
             >
-              {resolvedTheme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
-              {resolvedTheme === 'dark' ? 'Light mode' : 'Dark mode'}
+              {mounted && resolvedTheme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+              {mounted && resolvedTheme === 'dark' ? 'Light mode' : 'Dark mode'}
             </Button>
           </nav>
         </div>
