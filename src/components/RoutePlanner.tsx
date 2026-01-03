@@ -950,14 +950,11 @@ export default function RoutePlanner({ stations, onApplyToMap, onSelectStation }
               >
                 Apply to map
               </Button>
-              {googleMapsUrl && isMobile ? (
+              {googleMapsUrl ? (
                 <a
                   href={googleMapsUrl}
-                  // Same-tab navigation is more reliable on desktop browsers that block new tabs/windows.
-                  onClick={() => {
-                    // Best-effort: some environments swallow default navigation; force it.
-                    window.location.assign(googleMapsUrl);
-                  }}
+                  target="_blank"
+                  rel="noopener noreferrer"
                   className={cn(buttonVariants({ variant: "outline", size: "default" }), "gap-2")}
                 >
                   <MapIcon className="h-4 w-4" />
