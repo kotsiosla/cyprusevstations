@@ -26,11 +26,14 @@ const mapStyle = {
         "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
       ],
       tileSize: 256,
-      attribution: "Tiles © Esri — Source: Esri, Maxar, Earthstar Geographics, and the GIS User Community"
+      attribution:
+        "Tiles © Esri — Source: Esri, Maxar, Earthstar Geographics, and the GIS User Community"
     }
   },
   layers: [{ id: "esri-satellite", type: "raster" as const, source: "esri" }]
 };
+
+const stationLayerIds = ["clusters", "cluster-count", "unclustered-point", "selected-station"] as const;
 
 export default function ChargingStationMap({
   stations,
@@ -75,6 +78,7 @@ export default function ChargingStationMap({
 
   useEffect(() => {
     if (!mapContainerRef.current) return;
+    if (mapRef.current) return;
 
     const map = new maplibregl.Map({
       container: mapContainerRef.current,
@@ -83,10 +87,10 @@ export default function ChargingStationMap({
       zoom: defaultView.zoom
     });
 
+    mapRef.current = map;
+
     map.on("load", () => {
       if (map.getSource("stations")) return;
-<<<<<<< HEAD
-=======
 
       map.addSource("stations", {
         type: "geojson",
@@ -102,24 +106,8 @@ export default function ChargingStationMap({
         source: "stations",
         filter: ["has", "point_count"],
         paint: {
-          "circle-color": [
-            "step",
-            ["get", "point_count"],
-            "#60a5fa",
-            20,
-            "#2563eb",
-            50,
-            "#1e3a8a"
-          ],
-          "circle-radius": [
-            "step",
-            ["get", "point_count"],
-            18,
-            20,
-            24,
-            50,
-            30
-          ],
+          "circle-color": ["step", ["get", "point_count"], "#60a5fa", 20, "#2563eb", 50, "#1e3a8a"],
+          "circle-radius": ["step", ["get", "point_count"], 18, 20, 24, 50, 30],
           "circle-stroke-width": 2,
           "circle-stroke-color": "#0f172a"
         }
@@ -135,9 +123,7 @@ export default function ChargingStationMap({
           "text-font": ["Open Sans Bold", "Arial Unicode MS Bold"],
           "text-size": 12
         },
-        paint: {
-          "text-color": "#f8fafc"
-        }
+        paint: { "text-color": "#f8fafc" }
       });
 
       map.addLayer({
@@ -177,12 +163,11 @@ export default function ChargingStationMap({
       });
 
       map.on("click", "clusters", (event) => {
-        const features = map.queryRenderedFeatures(event.point, {
-          layers: ["clusters"]
-        });
+        const features = map.queryRenderedFeatures(event.point, { layers: ["clusters"] });
         const clusterId = features[0]?.properties?.cluster_id;
-        const source = map.getSource("stations") as maplibregl.GeoJSONSource;
+        const source = map.getSource("stations") as maplibregl.GeoJSONSource | undefined;
         if (!source || clusterId === undefined) return;
+
         source.getClusterExpansionZoom(clusterId, (error, zoom) => {
           if (error) return;
           const [longitude, latitude] = (features[0].geometry as GeoJSON.Point)
@@ -194,12 +179,9 @@ export default function ChargingStationMap({
       map.on("click", "unclustered-point", (event) => {
         const feature = event.features?.[0];
         if (!feature) return;
-        const properties = feature.properties ?? {};
-        const stationId = String(properties.id ?? "");
+        const stationId = String(feature.properties?.id ?? "");
         const station = stationsRef.current.find((item) => item.id === stationId);
-        if (station) {
-          onStationSelect?.(station);
-        }
+        if (station) onStationSelect?.(station);
       });
 
       map.on("mouseenter", "clusters", () => {
@@ -208,137 +190,6 @@ export default function ChargingStationMap({
       map.on("mouseleave", "clusters", () => {
         map.getCanvas().style.cursor = "";
       });
-
-      map.on("mouseenter", "unclustered-point", () => {
-        map.getCanvas().style.cursor = "pointer";
-      });
-      map.on("mouseleave", "unclustered-point", () => {
-        map.getCanvas().style.cursor = "";
-      });
-    });
->>>>>>> Consolidate map controls and refactor stations to clustered GeoJSON layers
-
-      map.addSource("stations", {
-        type: "geojson",
-        data: stationGeoJson,
-        cluster: true,
-        clusterMaxZoom: 13,
-        clusterRadius: 50
-      });
-
-      map.addLayer({
-        id: "clusters",
-        type: "circle",
-        source: "stations",
-        filter: ["has", "point_count"],
-        paint: {
-          "circle-color": [
-            "step",
-            ["get", "point_count"],
-            "#60a5fa",
-            20,
-            "#2563eb",
-            50,
-            "#1e3a8a"
-          ],
-          "circle-radius": [
-            "step",
-            ["get", "point_count"],
-            18,
-            20,
-            24,
-            50,
-            30
-          ],
-          "circle-stroke-width": 2,
-          "circle-stroke-color": "#0f172a"
-        }
-      });
-
-      map.addLayer({
-        id: "cluster-count",
-        type: "symbol",
-        source: "stations",
-        filter: ["has", "point_count"],
-        layout: {
-          "text-field": "{point_count_abbreviated}",
-          "text-font": ["Open Sans Bold", "Arial Unicode MS Bold"],
-          "text-size": 12
-        },
-        paint: {
-          "text-color": "#f8fafc"
-        }
-      });
-
-      map.addLayer({
-        id: "unclustered-point",
-        type: "circle",
-        source: "stations",
-        filter: ["!", ["has", "point_count"]],
-        paint: {
-          "circle-color": [
-            "match",
-            ["get", "availability"],
-            "available",
-            "#16a34a",
-            "occupied",
-            "#f59e0b",
-            "out_of_service",
-            "#ef4444",
-            "#64748b"
-          ],
-          "circle-radius": 7,
-          "circle-stroke-width": 2,
-          "circle-stroke-color": "#0f172a"
-        }
-      });
-
-      map.addLayer({
-        id: "selected-station",
-        type: "circle",
-        source: "stations",
-        filter: ["==", ["get", "id"], ""],
-        paint: {
-          "circle-color": "#0f172a",
-          "circle-radius": 10,
-          "circle-stroke-width": 3,
-          "circle-stroke-color": "#f8fafc"
-        }
-      });
-
-      map.on("click", "clusters", (event) => {
-        const features = map.queryRenderedFeatures(event.point, {
-          layers: ["clusters"]
-        });
-        const clusterId = features[0]?.properties?.cluster_id;
-        const source = map.getSource("stations") as maplibregl.GeoJSONSource;
-        if (!source || clusterId === undefined) return;
-        source.getClusterExpansionZoom(clusterId, (error, zoom) => {
-          if (error) return;
-          const [longitude, latitude] = (features[0].geometry as GeoJSON.Point)
-            .coordinates as [number, number];
-          map.easeTo({ center: [longitude, latitude], zoom });
-        });
-      });
-
-      map.on("click", "unclustered-point", (event) => {
-        const feature = event.features?.[0];
-        if (!feature) return;
-        const properties = feature.properties ?? {};
-        const stationId = String(properties.id ?? "");
-        const station = stationsRef.current.find((item) => item.id === stationId);
-        if (station) {
-          onStationSelect?.(station);
-        }
-      });
-
-      map.on("mouseenter", "clusters", () => {
-        map.getCanvas().style.cursor = "pointer";
-      });
-      map.on("mouseleave", "clusters", () => {
-        map.getCanvas().style.cursor = "";
-      });
-
       map.on("mouseenter", "unclustered-point", () => {
         map.getCanvas().style.cursor = "pointer";
       });
@@ -347,42 +198,23 @@ export default function ChargingStationMap({
       });
     });
 
-      map.addSource("stations", {
-        type: "geojson",
-        data: stationGeoJson,
-        cluster: true,
-        clusterMaxZoom: 13,
-        clusterRadius: 50
-      });
+    return () => {
+      popupRef.current?.remove();
+      popupRef.current = null;
 
-      map.addLayer({
-        id: "clusters",
-        type: "circle",
-        source: "stations",
-        filter: ["has", "point_count"],
-        paint: {
-          "circle-color": [
-            "step",
-            ["get", "point_count"],
-            "#60a5fa",
-            20,
-            "#2563eb",
-            50,
-            "#1e3a8a"
-          ],
-          "circle-radius": [
-            "step",
-            ["get", "point_count"],
-            18,
-            20,
-            24,
-            50,
-            30
-          ],
-          "circle-stroke-width": 2,
-          "circle-stroke-color": "#0f172a"
-        }
-      });
+      userMarkerRef.current?.remove();
+      userMarkerRef.current = null;
+
+      map.remove();
+      mapRef.current = null;
+    };
+    // Intentionally run once: map lifecycle is managed manually.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
 
     const source = map.getSource("stations") as maplibregl.GeoJSONSource | undefined;
     if (source) {
@@ -408,36 +240,9 @@ export default function ChargingStationMap({
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
-<<<<<<< HEAD
-=======
 
-    const source = map.getSource("stations") as maplibregl.GeoJSONSource | undefined;
-    if (source) {
-      source.setData(stationGeoJson);
-    }
-
-    if (userLocation) {
-      if (!userMarkerRef.current) {
-        const userMarker = document.createElement("div");
-        userMarker.className = "user-marker";
-        userMarkerRef.current = new maplibregl.Marker({ element: userMarker })
-          .setLngLat(userLocation)
-          .addTo(map);
-      } else {
-        userMarkerRef.current.setLngLat(userLocation);
-      }
-    } else if (userMarkerRef.current) {
-      userMarkerRef.current.remove();
-      userMarkerRef.current = null;
-    }
-  }, [stationGeoJson, userLocation]);
-
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map) return;
->>>>>>> Consolidate map controls and refactor stations to clustered GeoJSON layers
     const visibility = showStations ? "visible" : "none";
-    ["clusters", "cluster-count", "unclustered-point", "selected-station"].forEach((layerId) => {
+    stationLayerIds.forEach((layerId) => {
       if (map.getLayer(layerId)) {
         map.setLayoutProperty(layerId, "visibility", visibility);
       }
@@ -446,7 +251,16 @@ export default function ChargingStationMap({
 
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !selectedStation || !showStations) return;
+    if (!map) return;
+
+    if (!selectedStation || !showStations) {
+      if (map.getLayer("selected-station")) {
+        map.setFilter("selected-station", ["==", ["get", "id"], ""]);
+      }
+      popupRef.current?.remove();
+      popupRef.current = null;
+      return;
+    }
 
     map.flyTo({ center: selectedStation.coordinates, zoom: 12.5, speed: 1.2 });
     if (map.getLayer("selected-station")) {
@@ -457,10 +271,10 @@ export default function ChargingStationMap({
       selectedStation.availability === "available"
         ? "Available"
         : selectedStation.availability === "occupied"
-        ? "Occupied"
-        : selectedStation.availability === "out_of_service"
-        ? "Out of service"
-        : selectedStation.statusLabel || "Status unknown";
+          ? "Occupied"
+          : selectedStation.availability === "out_of_service"
+            ? "Out of service"
+            : selectedStation.statusLabel || "Status unknown";
 
     popupRef.current?.remove();
     popupRef.current = new maplibregl.Popup({ offset: 20 })
@@ -477,46 +291,6 @@ export default function ChargingStationMap({
       )
       .addTo(map);
   }, [selectedStation, showStations]);
-
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map) return;
-    if (!selectedStation || !showStations) {
-      if (map.getLayer("selected-station")) {
-        map.setFilter("selected-station", ["==", ["get", "id"], ""]);
-      }
-      popupRef.current?.remove();
-      popupRef.current = null;
-    }
-  }, [selectedStation, showStations]);
-
-  const handleZoomIn = () => {
-    mapRef.current?.zoomIn();
-  };
-
-  const handleZoomOut = () => {
-    mapRef.current?.zoomOut();
-  };
-
-  const handleResetView = () => {
-    mapRef.current?.flyTo({ center: defaultView.center, zoom: defaultView.zoom, speed: 1.2 });
-  };
-
-  const handleLocate = () => {
-    if (userLocation) {
-      mapRef.current?.flyTo({ center: userLocation, zoom: 12.5, speed: 1.2 });
-      return;
-    }
-    if (onRequestLocation) {
-      onRequestLocation();
-      return;
-    }
-    if (!navigator.geolocation) return;
-    navigator.geolocation.getCurrentPosition((position) => {
-      const coords: [number, number] = [position.coords.longitude, position.coords.latitude];
-      mapRef.current?.flyTo({ center: coords, zoom: 12.5, speed: 1.2 });
-    });
-  };
 
   const handleZoomIn = () => {
     mapRef.current?.zoomIn();
