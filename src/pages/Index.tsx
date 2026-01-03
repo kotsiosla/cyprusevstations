@@ -9,6 +9,17 @@ import { fetchChargingStations, sampleChargingStations, ChargingStation } from '
 import { fetchOpenChargeMapDetailsByCoords, parseOpenChargeMapUsageCost } from '@/lib/openChargeMap';
 import { VEHICLE_PROFILES, type VehicleProfile, stationFitsVehicle, stationMeetsMinPower } from '@/lib/vehicleProfiles';
 import { getWatchState, runAlertChecks, setAlertsEnabled } from '@/lib/alerts';
+import {
+  approveSuggestion,
+  importSuggestionFromUrlParam,
+  listApprovedSuggestions,
+  listPendingSuggestions,
+  removeApprovedSuggestion,
+  rejectSuggestion,
+  suggestionToChargingStation,
+  type StationSuggestion
+} from '@/lib/userSuggestions';
+import { toast } from '@/components/ui/sonner';
 import { Helmet } from 'react-helmet-async';
 import { BatteryCharging, Heart, MapPin, Navigation } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -49,16 +60,24 @@ const Index = () => {
 
   const [alertsEnabled, setAlertsEnabledState] = useState(false);
   const [watchedCount, setWatchedCount] = useState(0);
+  const [pendingSuggestions, setPendingSuggestions] = useState<StationSuggestion[]>([]);
+  const [approvedSuggestions, setApprovedSuggestions] = useState<StationSuggestion[]>([]);
+
+  const isAdmin = useMemo(() => {
+    try {
+      return new URLSearchParams(window.location.search).get('admin') === '1';
+    } catch {
+      return false;
+    }
+  }, []);
 
   useEffect(() => {
     const loadStations = async () => {
       try {
         const data = await fetchChargingStations();
-        if (data.length > 0) {
-          setStations(data);
-        } else {
-          setStations(sampleChargingStations);
-        }
+        const base = data.length > 0 ? data : sampleChargingStations;
+        const approved = listApprovedSuggestions().map(suggestionToChargingStation);
+        setStations([...base, ...approved]);
       } catch (error) {
         console.error('Failed to load charging stations:', error);
       } finally {
@@ -67,6 +86,36 @@ const Index = () => {
     };
 
     loadStations();
+  }, []);
+
+  useEffect(() => {
+    const refresh = () => {
+      setPendingSuggestions(listPendingSuggestions());
+      setApprovedSuggestions(listApprovedSuggestions());
+    };
+    refresh();
+    const onStorage = () => refresh();
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, []);
+
+  useEffect(() => {
+    // Admin can import a user submission via a link: ?importSuggestion=...
+    try {
+      const url = new URL(window.location.href);
+      const payload = url.searchParams.get('importSuggestion');
+      if (!payload) return;
+      const imported = importSuggestionFromUrlParam(payload);
+      if (imported) {
+        toast.success('Suggestion imported', { description: 'It is now pending admin approval.' });
+      } else {
+        toast.error('Invalid suggestion link');
+      }
+      url.searchParams.delete('importSuggestion');
+      window.history.replaceState({}, '', url.pathname + (url.searchParams.toString() ? `?${url.searchParams}` : ''));
+    } catch {
+      // ignore
+    }
   }, []);
 
   useEffect(() => {
@@ -477,6 +526,109 @@ const Index = () => {
                   </div>
                 </div>
               )}
+
+              {isAdmin ? (
+                <div className="mb-6 rounded-xl border bg-background p-4 shadow-soft">
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <p className="text-xs text-muted-foreground">Admin</p>
+                      <p className="font-medium">User-submitted station suggestions</p>
+                      <p className="text-xs text-muted-foreground">
+                        Pending: {pendingSuggestions.length} · Approved: {approvedSuggestions.length}
+                      </p>
+                    </div>
+                    <div className="text-xs text-muted-foreground">
+                      Tip: open submission links with <code>?admin=1</code> to review & approve.
+                    </div>
+                  </div>
+
+                  {pendingSuggestions.length ? (
+                    <div className="mt-3 space-y-2">
+                      {pendingSuggestions.slice(0, 12).map((s) => (
+                        <div
+                          key={s.id}
+                          className="rounded-lg border bg-muted/20 p-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"
+                        >
+                          <div className="min-w-0">
+                            <div className="font-medium truncate">{s.name}</div>
+                            <div className="text-xs text-muted-foreground truncate">
+                              {(s.city || s.address || 'Cyprus') +
+                                (s.powerKw ? ` · ${s.powerKw} kW` : '') +
+                                (s.connectors?.length ? ` · ${s.connectors.join(', ')}` : '')}
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <Button
+                              size="sm"
+                              onClick={() => {
+                                const approved = approveSuggestion(s.id);
+                                if (approved) {
+                                  setStations((prev) => {
+                                    const id = `user/${approved.id}`;
+                                    if (prev.some((x) => x.id === id)) return prev;
+                                    return [...prev, suggestionToChargingStation(approved)];
+                                  });
+                                  setPendingSuggestions(listPendingSuggestions());
+                                  setApprovedSuggestions(listApprovedSuggestions());
+                                  toast.success('Approved', { description: 'Now shown on the map as “User suggested”.' });
+                                }
+                              }}
+                            >
+                              Approve
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => {
+                                rejectSuggestion(s.id);
+                                setPendingSuggestions(listPendingSuggestions());
+                                toast.message('Rejected', { description: 'Removed from pending list.' });
+                              }}
+                            >
+                              Reject
+                            </Button>
+                          </div>
+                        </div>
+                      ))}
+                      {pendingSuggestions.length > 12 ? (
+                        <div className="text-xs text-muted-foreground">Showing first 12 pending suggestions.</div>
+                      ) : null}
+                    </div>
+                  ) : (
+                    <div className="mt-3 text-sm text-muted-foreground">No pending suggestions.</div>
+                  )}
+
+                  {approvedSuggestions.length ? (
+                    <div className="mt-4">
+                      <p className="text-xs font-medium text-muted-foreground mb-2">Approved (local)</p>
+                      <div className="grid gap-2 md:grid-cols-2">
+                        {approvedSuggestions.slice(0, 6).map((s) => (
+                          <div key={s.id} className="rounded-lg border bg-muted/10 p-3 flex items-center justify-between gap-2">
+                            <div className="min-w-0">
+                              <div className="text-sm font-medium truncate">{s.name}</div>
+                              <div className="text-xs text-muted-foreground truncate">
+                                {(s.city || 'Cyprus') + (s.powerKw ? ` · ${s.powerKw} kW` : '')}
+                              </div>
+                            </div>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => {
+                                removeApprovedSuggestion(s.id);
+                                setApprovedSuggestions(listApprovedSuggestions());
+                                setStations((prev) => prev.filter((st) => st.id !== `user/${s.id}`));
+                                toast.message('Removed', { description: 'Removed from map (local).' });
+                              }}
+                            >
+                              Remove
+                            </Button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
 
               <div className="h-[500px] lg:h-[600px]">
                 <ChargingStationMap

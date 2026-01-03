@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
-import { Crosshair, Home, Search, SlidersHorizontal, X, ZoomIn, ZoomOut } from "lucide-react";
+import { Crosshair, Home, MapPinPlus, Search, Share2, SlidersHorizontal, Users, X, ZoomIn, ZoomOut } from "lucide-react";
 import { ChargingStation } from "@/lib/chargingStations";
 import type { FeatureCollection, Feature, LineString, Point } from "geojson";
 import { Input } from "@/components/ui/input";
+import SuggestStationDialog from "@/components/SuggestStationDialog";
+import { toast } from "@/components/ui/sonner";
 
 interface ChargingStationMapProps {
   stations: ChargingStation[];
@@ -26,6 +28,7 @@ const defaultView = {
 const mapStyleUrl = "https://tiles.openfreemap.org/styles/liberty";
 
 const stationLayerIds = ["clusters", "cluster-count", "unclustered-point", "selected-station"] as const;
+const userStationLayerIds = ["user-stations-point", "user-selected-station"] as const;
 
 export default function ChargingStationMap({
   stations,
@@ -42,8 +45,15 @@ export default function ChargingStationMap({
   const userMarkerRef = useRef<maplibregl.Marker | null>(null);
   const stationsRef = useRef<ChargingStation[]>(stations);
   const [showStations, setShowStations] = useState(true);
+  const [showUserStations, setShowUserStations] = useState(true);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [suggestOpen, setSuggestOpen] = useState(false);
+  const [suggestCoords, setSuggestCoords] = useState<[number, number] | null>(null);
+  const suggestMarkerRef = useRef<maplibregl.Marker | null>(null);
+
+  const officialStations = useMemo(() => stations.filter((s) => !s.isUserSuggested), [stations]);
+  const userSuggestedStations = useMemo(() => stations.filter((s) => s.isUserSuggested), [stations]);
 
   const smartSearchResults = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
@@ -163,7 +173,7 @@ export default function ChargingStationMap({
   const stationGeoJson = useMemo(() => {
     return {
       type: "FeatureCollection" as const,
-      features: stations
+      features: officialStations
         .filter((station) => station.coordinates)
         .map((station) => ({
           type: "Feature" as const,
@@ -181,7 +191,28 @@ export default function ChargingStationMap({
           }
         }))
     };
-  }, [stations]);
+  }, [officialStations]);
+
+  const userStationGeoJson = useMemo(() => {
+    return {
+      type: "FeatureCollection" as const,
+      features: userSuggestedStations
+        .filter((station) => station.coordinates)
+        .map((station) => ({
+          type: "Feature" as const,
+          geometry: {
+            type: "Point" as const,
+            coordinates: station.coordinates
+          },
+          properties: {
+            id: station.id,
+            name: station.name,
+            address: station.address ?? "",
+            statusLabel: station.statusLabel ?? "User suggested (unverified)"
+          }
+        }))
+    };
+  }, [userSuggestedStations]);
 
   useEffect(() => {
     stationsRef.current = stations;
@@ -209,6 +240,11 @@ export default function ChargingStationMap({
         cluster: true,
         clusterMaxZoom: 13,
         clusterRadius: 50
+      });
+
+      map.addSource("user-stations", {
+        type: "geojson",
+        data: userStationGeoJson
       });
 
       map.addLayer({
@@ -270,6 +306,31 @@ export default function ChargingStationMap({
           "circle-radius": 10,
           "circle-stroke-width": 3,
           "circle-stroke-color": "#f8fafc"
+        }
+      });
+
+      map.addLayer({
+        id: "user-stations-point",
+        type: "circle",
+        source: "user-stations",
+        paint: {
+          "circle-color": "#a855f7",
+          "circle-radius": 7,
+          "circle-stroke-width": 2,
+          "circle-stroke-color": "#f8fafc"
+        }
+      });
+
+      map.addLayer({
+        id: "user-selected-station",
+        type: "circle",
+        source: "user-stations",
+        filter: ["==", ["get", "id"], ""],
+        paint: {
+          "circle-color": "#0f172a",
+          "circle-radius": 10,
+          "circle-stroke-width": 3,
+          "circle-stroke-color": "#a855f7"
         }
       });
 
@@ -355,6 +416,14 @@ export default function ChargingStationMap({
         if (station) onStationSelect?.(station);
       });
 
+      map.on("click", "user-stations-point", (event) => {
+        const feature = event.features?.[0];
+        if (!feature) return;
+        const stationId = String(feature.properties?.id ?? "");
+        const station = stationsRef.current.find((item) => item.id === stationId);
+        if (station) onStationSelect?.(station);
+      });
+
       map.on("mouseenter", "clusters", () => {
         map.getCanvas().style.cursor = "pointer";
       });
@@ -365,6 +434,12 @@ export default function ChargingStationMap({
         map.getCanvas().style.cursor = "pointer";
       });
       map.on("mouseleave", "unclustered-point", () => {
+        map.getCanvas().style.cursor = "";
+      });
+      map.on("mouseenter", "user-stations-point", () => {
+        map.getCanvas().style.cursor = "pointer";
+      });
+      map.on("mouseleave", "user-stations-point", () => {
         map.getCanvas().style.cursor = "";
       });
 
@@ -398,6 +473,10 @@ export default function ChargingStationMap({
     if (source) {
       source.setData(stationGeoJson);
     }
+    const userSource = map.getSource("user-stations") as maplibregl.GeoJSONSource | undefined;
+    if (userSource) {
+      userSource.setData(userStationGeoJson);
+    }
 
     const routeLineSource = map.getSource("route-line") as maplibregl.GeoJSONSource | undefined;
     if (routeLineSource) routeLineSource.setData(routeLineGeoJson);
@@ -430,7 +509,15 @@ export default function ChargingStationMap({
       userMarkerRef.current.remove();
       userMarkerRef.current = null;
     }
-  }, [stationGeoJson, userLocation, routeLineGeoJson, routeAnchorsGeoJson, routeStopsGeoJson, routePolyline]);
+  }, [
+    stationGeoJson,
+    userStationGeoJson,
+    userLocation,
+    routeLineGeoJson,
+    routeAnchorsGeoJson,
+    routeStopsGeoJson,
+    routePolyline
+  ]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -447,10 +534,27 @@ export default function ChargingStationMap({
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
+    const visibility = showUserStations ? "visible" : "none";
+    userStationLayerIds.forEach((layerId) => {
+      if (map.getLayer(layerId)) {
+        map.setLayoutProperty(layerId, "visibility", visibility);
+      }
+    });
+  }, [showUserStations]);
 
-    if (!selectedStation || !showStations) {
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    const selectedIsUser = Boolean(selectedStation?.isUserSuggested);
+    const selectedVisible = selectedIsUser ? showUserStations : showStations;
+
+    if (!selectedStation || !selectedVisible) {
       if (map.getLayer("selected-station")) {
         map.setFilter("selected-station", ["==", ["get", "id"], ""]);
+      }
+      if (map.getLayer("user-selected-station")) {
+        map.setFilter("user-selected-station", ["==", ["get", "id"], ""]);
       }
       popupRef.current?.remove();
       popupRef.current = null;
@@ -458,8 +562,17 @@ export default function ChargingStationMap({
     }
 
     map.flyTo({ center: selectedStation.coordinates, zoom: 12.5, speed: 1.2 });
-    if (map.getLayer("selected-station")) {
+    if (!selectedIsUser && map.getLayer("selected-station")) {
       map.setFilter("selected-station", ["==", ["get", "id"], selectedStation.id]);
+      if (map.getLayer("user-selected-station")) {
+        map.setFilter("user-selected-station", ["==", ["get", "id"], ""]);
+      }
+    }
+    if (selectedIsUser && map.getLayer("user-selected-station")) {
+      map.setFilter("user-selected-station", ["==", ["get", "id"], selectedStation.id]);
+      if (map.getLayer("selected-station")) {
+        map.setFilter("selected-station", ["==", ["get", "id"], ""]);
+      }
     }
 
     const availabilityLabel =
@@ -507,6 +620,21 @@ export default function ChargingStationMap({
           </div>
         </div>`
       : "";
+
+    const userNotesHtml =
+      selectedStation.isUserSuggested && selectedStation.suggestionNotes
+        ? `<div class="text-xs mt-2">
+            <div class="font-medium mb-1">User notes</div>
+            <div style="opacity:.9;">${escapeHtml(String(selectedStation.suggestionNotes))}</div>
+          </div>`
+        : "";
+
+    const userPhotoHtml =
+      selectedStation.isUserSuggested && selectedStation.suggestionPhotoDataUrl
+        ? `<div class="text-xs mt-2">
+            <img src="${selectedStation.suggestionPhotoDataUrl}" alt="User photo" style="width:100%; max-height:140px; object-fit:cover; border-radius:10px; border:1px solid rgba(148,163,184,0.6);" />
+          </div>`
+        : "";
 
     const directionsUrl = (() => {
       const [lon, lat] = selectedStation.coordinates;
@@ -578,13 +706,15 @@ export default function ChargingStationMap({
           `<div class="text-xs mt-1">${availabilityLabel}</div>` +
           directionsHtml +
           portsHtml +
+          userNotesHtml +
+          userPhotoHtml +
           ocmHtml +
           (selectedStation.openingHours
             ? `<div class="text-xs text-muted-foreground">${escapeHtml(selectedStation.openingHours)}</div>`
             : "")
       )
       .addTo(map);
-  }, [selectedStation, showStations, userLocation]);
+  }, [selectedStation, showStations, showUserStations, userLocation]);
 
   const handleZoomIn = () => {
     mapRef.current?.zoomIn();
@@ -614,6 +744,70 @@ export default function ChargingStationMap({
     });
   };
 
+  const handleShareApp = async () => {
+    const url = window.location.href;
+    try {
+      if (navigator.share) {
+        await navigator.share({
+          title: "Cyprus EV Chargers",
+          text: "EV charging stations map for Cyprus",
+          url
+        });
+        return;
+      }
+    } catch {
+      // ignore and fall back to clipboard
+    }
+    try {
+      await navigator.clipboard.writeText(url);
+      toast.success("Link copied", { description: "Share it to collect more stations." });
+    } catch {
+      toast.message("Share this link", { description: url });
+    }
+  };
+
+  const handleOpenSuggest = () => {
+    const map = mapRef.current;
+    if (map) {
+      const c = map.getCenter();
+      setSuggestCoords([c.lng, c.lat]);
+    } else {
+      setSuggestCoords(null);
+    }
+    setSuggestOpen(true);
+    toast.message("Pick location", { description: "Click on the map to set the new station location." });
+  };
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    if (!suggestOpen) {
+      suggestMarkerRef.current?.remove();
+      suggestMarkerRef.current = null;
+      return;
+    }
+    const onClick = (e: maplibregl.MapMouseEvent & maplibregl.EventData) => {
+      const coords: [number, number] = [e.lngLat.lng, e.lngLat.lat];
+      setSuggestCoords(coords);
+      if (!suggestMarkerRef.current) {
+        const el = document.createElement("div");
+        el.style.width = "14px";
+        el.style.height = "14px";
+        el.style.borderRadius = "999px";
+        el.style.background = "#a855f7";
+        el.style.border = "2px solid #f8fafc";
+        el.style.boxShadow = "0 8px 20px rgba(0,0,0,.25)";
+        suggestMarkerRef.current = new maplibregl.Marker({ element: el }).setLngLat(coords).addTo(map);
+      } else {
+        suggestMarkerRef.current.setLngLat(coords);
+      }
+    };
+    map.on("click", onClick);
+    return () => {
+      map.off("click", onClick);
+    };
+  }, [suggestOpen]);
+
   return (
     <div className="relative w-full h-full">
       <div ref={mapContainerRef} className="absolute inset-0" />
@@ -634,6 +828,30 @@ export default function ChargingStationMap({
           aria-label={showStations ? "Hide stations" : "Show stations"}
         >
           <SlidersHorizontal className="h-4 w-4" />
+        </button>
+        <button
+          type="button"
+          onClick={() => setShowUserStations((prev) => !prev)}
+          className="rounded-full border bg-background/90 p-2 shadow-soft backdrop-blur transition hover:bg-background"
+          aria-label={showUserStations ? "Hide user-submitted stations" : "Show user-submitted stations"}
+        >
+          <Users className="h-4 w-4" />
+        </button>
+        <button
+          type="button"
+          onClick={handleOpenSuggest}
+          className="rounded-full border bg-background/90 p-2 shadow-soft backdrop-blur transition hover:bg-background"
+          aria-label="Suggest a new charging station"
+        >
+          <MapPinPlus className="h-4 w-4" />
+        </button>
+        <button
+          type="button"
+          onClick={handleShareApp}
+          className="rounded-full border bg-background/90 p-2 shadow-soft backdrop-blur transition hover:bg-background"
+          aria-label="Share this app"
+        >
+          <Share2 className="h-4 w-4" />
         </button>
         <button
           type="button"
@@ -746,8 +964,24 @@ export default function ChargingStationMap({
             <div className="w-3 h-3 rounded-full bg-muted-foreground" />
             <span className="text-xs text-muted-foreground">Unknown</span>
           </div>
+          <div className="flex items-center gap-2 pt-1">
+            <div className="w-3 h-3 rounded-full bg-[#a855f7]" />
+            <span className="text-xs text-muted-foreground">User suggested</span>
+          </div>
         </div>
       </div>
+
+      <SuggestStationDialog
+        open={suggestOpen}
+        onOpenChange={(open) => {
+          setSuggestOpen(open);
+          if (!open) {
+            suggestMarkerRef.current?.remove();
+            suggestMarkerRef.current = null;
+          }
+        }}
+        coordinates={suggestCoords}
+      />
     </div>
   );
 }
