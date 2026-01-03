@@ -171,6 +171,41 @@ function normalizePlaceToPlugLabel(value?: string) {
   }
 }
 
+function normalizePlaceToPlugOccupancy(value?: string) {
+  if (!value) return "unknown" as const;
+  const normalized = value.toUpperCase().trim();
+  if (normalized === "AVAILABLE") return "available" as const;
+  if (normalized === "OCCUPIED" || normalized === "CHARGING") return "occupied" as const;
+  if (normalized === "OUTOFORDER" || normalized === "OUT_OF_ORDER") return "out_of_service" as const;
+  return "unknown" as const;
+}
+
+function deriveAvailabilityFromPlaceToPlugPlugs(statuses: string[]) {
+  const normalized = statuses.map(normalizePlaceToPlugOccupancy);
+  if (normalized.includes("occupied")) return "occupied" as const;
+  // If *everything* is out of order, treat the zone as out of service.
+  if (normalized.length > 0 && normalized.every((item) => item === "out_of_service")) {
+    return "out_of_service" as const;
+  }
+  if (normalized.includes("available")) return "available" as const;
+  return "unknown" as const;
+}
+
+function buildPlaceToPlugLabelFromPlugs(statuses: string[]) {
+  if (!statuses.length) return undefined;
+  const normalized = statuses.map(normalizePlaceToPlugOccupancy);
+  const total = normalized.length;
+  const available = normalized.filter((s) => s === "available").length;
+  const occupied = normalized.filter((s) => s === "occupied").length;
+  const outOfService = normalized.filter((s) => s === "out_of_service").length;
+
+  if (occupied > 0) return `${occupied}/${total} in use`;
+  if (available > 0 && available === total) return `${available}/${total} available`;
+  if (available > 0) return `${available}/${total} available`;
+  if (outOfService > 0 && outOfService === total) return "Out of order";
+  return undefined;
+}
+
 function findStatusCandidates(tags: Record<string, string | undefined>) {
   const candidates: string[] = [];
   const direct =
@@ -651,6 +686,13 @@ async function fetchPlaceToPlugGraphqlStatusData(): Promise<ExternalStatus[]> {
           name
           coordinates
           status
+          stations {
+            services {
+              plugs {
+                status
+              }
+            }
+          }
         }
       }
     }
@@ -698,8 +740,23 @@ async function fetchPlaceToPlugGraphqlStatusData(): Promise<ExternalStatus[]> {
         if (!Number.isFinite(lon) || !Number.isFinite(lat)) return null;
 
         const statusValue = zone?.status;
-        const availability = normalizeAvailability(statusValue);
-        const statusLabel = normalizePlaceToPlugLabel(statusValue) ?? normalizeStatusLabel(statusValue);
+        const plugStatuses: string[] =
+          zone?.stations?.flatMap((station: any) =>
+            station?.services?.flatMap((service: any) =>
+              service?.plugs?.map((plug: any) => String(plug?.status ?? "")).filter(Boolean)
+            )
+          ) ?? [];
+
+        const plugDerivedAvailability = deriveAvailabilityFromPlaceToPlugPlugs(plugStatuses);
+        const availability =
+          plugDerivedAvailability !== "unknown"
+            ? plugDerivedAvailability
+            : normalizeAvailability(statusValue);
+
+        const statusLabel =
+          buildPlaceToPlugLabelFromPlugs(plugStatuses) ??
+          normalizePlaceToPlugLabel(statusValue) ??
+          normalizeStatusLabel(statusValue);
         const name = zone?.name ? String(zone.name) : undefined;
 
         return {
