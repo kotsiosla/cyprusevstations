@@ -70,6 +70,20 @@ export function addPendingSuggestion(input: Omit<StationSuggestion, "id" | "crea
   return suggestion;
 }
 
+export function addPendingSuggestionWithMeta(
+  input: Omit<StationSuggestion, "id" | "createdAt">,
+  meta?: Partial<Pick<StationSuggestion, "id" | "createdAt">>
+): StationSuggestion {
+  const store = readStore();
+  const id = typeof meta?.id === "string" && meta.id ? meta.id : genId();
+  const createdAt = typeof meta?.createdAt === "number" && Number.isFinite(meta.createdAt) ? meta.createdAt : Date.now();
+  const suggestion: StationSuggestion = { ...input, id, createdAt };
+  store.pending.push(suggestion);
+  store.pending = store.pending.slice(-500);
+  writeStore(store);
+  return suggestion;
+}
+
 export function approveSuggestion(id: string) {
   const store = readStore();
   const idx = store.pending.findIndex((s) => s.id === id);
@@ -147,7 +161,6 @@ export function importSuggestionFromUrlParam(payload: string): StationSuggestion
     const suggestion = parsed?.suggestion;
     if (!suggestion || typeof suggestion !== "object") return null;
     if (!Array.isArray(suggestion.coordinates) || suggestion.coordinates.length < 2) return null;
-    // Do not trust incoming IDs/timestamps; regenerate.
     const normalized: Omit<StationSuggestion, "id" | "createdAt"> = {
       coordinates: [Number(suggestion.coordinates[0]), Number(suggestion.coordinates[1])],
       name: String(suggestion.name ?? "User suggested station"),
@@ -160,7 +173,12 @@ export function importSuggestionFromUrlParam(payload: string): StationSuggestion
         ? String(suggestion.photoDataUrl)
         : undefined
     };
-    return addPendingSuggestion(normalized);
+    // Keep incoming id/timestamp when provided so admins can dedupe/publish globally.
+    const meta: Partial<Pick<StationSuggestion, "id" | "createdAt">> = {
+      id: typeof suggestion.id === "string" ? suggestion.id : undefined,
+      createdAt: typeof suggestion.createdAt === "number" ? suggestion.createdAt : undefined
+    };
+    return addPendingSuggestionWithMeta(normalized, meta);
   } catch {
     return null;
   }

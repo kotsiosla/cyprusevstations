@@ -19,6 +19,7 @@ import {
   suggestionToChargingStation,
   type StationSuggestion
 } from '@/lib/userSuggestions';
+import { buildGlobalUserStationsFile, fetchGlobalApprovedSuggestions } from '@/lib/globalUserStations';
 import { toast } from '@/components/ui/sonner';
 import { Helmet } from 'react-helmet-async';
 import { BatteryCharging, Heart, MapPin, Navigation } from 'lucide-react';
@@ -26,6 +27,30 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+
+const uniqBy = <T,>(items: T[], key: (item: T) => string) => {
+  const seen = new Set<string>();
+  const out: T[] = [];
+  for (const item of items) {
+    const k = key(item);
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(item);
+  }
+  return out;
+};
+
+const downloadTextFile = (filename: string, text: string) => {
+  const blob = new Blob([text], { type: 'application/json;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+};
 
 const Index = () => {
   const [stations, setStations] = useState<ChargingStation[]>([]);
@@ -62,6 +87,7 @@ const Index = () => {
   const [watchedCount, setWatchedCount] = useState(0);
   const [pendingSuggestions, setPendingSuggestions] = useState<StationSuggestion[]>([]);
   const [approvedSuggestions, setApprovedSuggestions] = useState<StationSuggestion[]>([]);
+  const [globalApprovedSuggestions, setGlobalApprovedSuggestions] = useState<StationSuggestion[]>([]);
 
   const isAdmin = useMemo(() => {
     try {
@@ -76,8 +102,12 @@ const Index = () => {
       try {
         const data = await fetchChargingStations();
         const base = data.length > 0 ? data : sampleChargingStations;
-        const approved = listApprovedSuggestions().map(suggestionToChargingStation);
-        setStations([...base, ...approved]);
+        const globalApproved = await fetchGlobalApprovedSuggestions();
+        setGlobalApprovedSuggestions(globalApproved);
+
+        const globalStations = globalApproved.map(suggestionToChargingStation);
+        const localApprovedStations = listApprovedSuggestions().map(suggestionToChargingStation);
+        setStations(uniqBy([...base, ...globalStations, ...localApprovedStations], (s) => s.id));
       } catch (error) {
         console.error('Failed to load charging stations:', error);
       } finally {
@@ -116,7 +146,11 @@ const Index = () => {
               if (prev.some((x) => x.id === id)) return prev;
               return [...prev, suggestionToChargingStation(approved)];
             });
-            toast.success('Approved & added to map', { description: 'Shown as “User suggested (unverified)”.' });
+            setPendingSuggestions(listPendingSuggestions());
+            setApprovedSuggestions(listApprovedSuggestions());
+            toast.success('Approved & added to map', {
+              description: 'Shown as “User suggested (unverified)”. To publish for everyone, update public/user-stations.json.'
+            });
           } else {
             toast.success('Suggestion imported', { description: 'It is now pending admin approval.' });
           }
@@ -558,6 +592,65 @@ const Index = () => {
                     </div>
                   </div>
 
+                  <div className="mt-3 rounded-xl border bg-muted/20 p-3">
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                      <div>
+                        <p className="text-xs text-muted-foreground">Global publish (Option A)</p>
+                        <p className="text-sm font-medium">Update the shared stations file for everyone</p>
+                        <p className="text-xs text-muted-foreground">
+                          Published: {globalApprovedSuggestions.length} · Local approved (not yet published): {approvedSuggestions.length}
+                        </p>
+                      </div>
+                      <div className="flex flex-col sm:flex-row gap-2">
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          onClick={async () => {
+                            const merged = uniqBy(
+                              [...globalApprovedSuggestions, ...approvedSuggestions],
+                              (s) => String(s.id ?? '')
+                            );
+                            const file = buildGlobalUserStationsFile(merged);
+                            const text = JSON.stringify(file, null, 2) + '\n';
+                            try {
+                              await navigator.clipboard.writeText(text);
+                              toast.success('Copied user-stations.json', {
+                                description: 'Paste into public/user-stations.json on main and merge.'
+                              });
+                            } catch {
+                              downloadTextFile('user-stations.json', text);
+                              toast.message('Downloaded user-stations.json', {
+                                description: 'Commit it to public/user-stations.json and deploy.'
+                              });
+                            }
+                          }}
+                        >
+                          Copy JSON
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => {
+                            const merged = uniqBy(
+                              [...globalApprovedSuggestions, ...approvedSuggestions],
+                              (s) => String(s.id ?? '')
+                            );
+                            const file = buildGlobalUserStationsFile(merged);
+                            const text = JSON.stringify(file, null, 2) + '\n';
+                            downloadTextFile('user-stations.json', text);
+                            toast.message('Downloaded', { description: 'Commit to public/user-stations.json and redeploy.' });
+                          }}
+                        >
+                          Download JSON
+                        </Button>
+                      </div>
+                    </div>
+                    <p className="mt-2 text-xs text-muted-foreground">
+                      After approving/editing/removing, update <code>public/user-stations.json</code> in the repo and deploy
+                      (push to <code>main</code>).
+                    </p>
+                  </div>
+
                   {pendingSuggestions.length ? (
                     <div className="mt-3 space-y-2">
                       {pendingSuggestions.slice(0, 12).map((s) => (
@@ -633,7 +726,9 @@ const Index = () => {
                                 removeApprovedSuggestion(s.id);
                                 setApprovedSuggestions(listApprovedSuggestions());
                                 setStations((prev) => prev.filter((st) => st.id !== `user/${s.id}`));
-                                toast.message('Removed', { description: 'Removed from map (local).' });
+                                toast.message('Removed', {
+                                  description: 'Removed from your local map. To remove for everyone, update public/user-stations.json.'
+                                });
                               }}
                             >
                               Remove
