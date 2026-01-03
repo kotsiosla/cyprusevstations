@@ -9,6 +9,33 @@ const ADMIN_NOTIFY_ENDPOINT = VITE_ENV.VITE_ADMIN_NOTIFY_ENDPOINT;
 
 export type AdminNotifyResult = { ok: boolean; reason?: string };
 
+export function isAdminNotifyConfigured(): boolean {
+  return Boolean(ADMIN_NOTIFY_ENDPOINT);
+}
+
+async function postJson(endpoint: string, body: unknown) {
+  return await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "application/json"
+    },
+    body: JSON.stringify(body)
+  });
+}
+
+async function postForm(endpoint: string, body: Record<string, string>) {
+  const params = new URLSearchParams(body);
+  return await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+      Accept: "application/json"
+    },
+    body: params.toString()
+  });
+}
+
 export async function notifyAdminNewSuggestion(args: {
   approvalUrl: string;
   suggestion: StationSuggestion;
@@ -52,18 +79,36 @@ export async function notifyAdminNewSuggestion(args: {
   };
 
   try {
-    const res = await fetch(ADMIN_NOTIFY_ENDPOINT, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "application/json"
-      },
-      body: JSON.stringify(body)
-    });
-    if (!res.ok) return { ok: false, reason: `http_${res.status}` };
-    return { ok: true };
+    const res = await postJson(ADMIN_NOTIFY_ENDPOINT, body);
+    if (res.ok) return { ok: true };
+
+    // Some form providers only accept form-encoded payloads.
+    if (res.status === 400 || res.status === 401 || res.status === 403 || res.status === 404 || res.status === 405 || res.status === 415) {
+      const formRes = await postForm(ADMIN_NOTIFY_ENDPOINT, Object.fromEntries(
+        Object.entries(body).map(([k, v]) => [k, typeof v === "string" ? v : String(v)])
+      ));
+      if (formRes.ok) return { ok: true };
+      return { ok: false, reason: `http_${formRes.status}` };
+    }
+
+    return { ok: false, reason: `http_${res.status}` };
   } catch {
-    return { ok: false, reason: "network_error" };
+    // Last resort: attempt a simple "no-cors" POST. This can still deliver data to some webhook providers,
+    // but the browser will hide the response (opaque) so we cannot verify delivery.
+    try {
+      await fetch(ADMIN_NOTIFY_ENDPOINT, {
+        method: "POST",
+        mode: "no-cors",
+        headers: {
+          // Must be a "simple" content-type for no-cors requests.
+          "Content-Type": "text/plain"
+        },
+        body: JSON.stringify(body)
+      });
+      return { ok: true, reason: "opaque_no_cors" };
+    } catch {
+      return { ok: false, reason: "network_error" };
+    }
   }
 }
 

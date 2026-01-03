@@ -1,15 +1,16 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { toast } from "@/components/ui/sonner";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { useIsMobile } from "@/hooks/use-mobile";
-import { ChevronDown, X } from "lucide-react";
+import { ChevronDown, ImagePlus, Loader2, Trash2, X } from "lucide-react";
 import type { SuggestedConnector, StationSuggestion } from "@/lib/userSuggestions";
 import { addPendingSuggestion, makeSuggestionApprovalUrl } from "@/lib/userSuggestions";
-import { notifyAdminNewSuggestion } from "@/lib/adminNotify";
+import { isAdminNotifyConfigured, notifyAdminNewSuggestion } from "@/lib/adminNotify";
 
 type Props = {
   open: boolean;
@@ -39,6 +40,8 @@ export default function SuggestStationDialog({ open, onOpenChange, coordinates }
   const [busy, setBusy] = useState(false);
   const isMobile = useIsMobile();
   const [detailsOpen, setDetailsOpen] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const notifyConfigured = isAdminNotifyConfigured();
 
   useEffect(() => {
     if (open) setDetailsOpen(!isMobile);
@@ -66,6 +69,7 @@ export default function SuggestStationDialog({ open, onOpenChange, coordinates }
     setNotes("");
     setConnectors([]);
     setPhotoDataUrl(null);
+    if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
   const toggleConnector = (c: SuggestedConnector) => {
@@ -73,6 +77,7 @@ export default function SuggestStationDialog({ open, onOpenChange, coordinates }
   };
 
   const handleSubmit = async () => {
+    if (busy) return;
     if (!coordinates) {
       toast.error("Pick a location on the map first.");
       return;
@@ -82,45 +87,53 @@ export default function SuggestStationDialog({ open, onOpenChange, coordinates }
       toast.error("Please enter a station name.");
       return;
     }
-    const power = Number(powerKw);
-    const powerNum = Number.isFinite(power) && power > 0 ? power : undefined;
-    const payload: Omit<StationSuggestion, "id" | "createdAt"> = {
-      coordinates,
-      name: trimmed,
-      city: city.trim() || undefined,
-      address: address.trim() || undefined,
-      connectors,
-      powerKw: powerNum,
-      notes: notes.trim() || undefined,
-      photoDataUrl: photoDataUrl ?? undefined
-    };
-    const suggestion = addPendingSuggestion(payload);
-    const approvalUrl = makeSuggestionApprovalUrl(suggestion);
+    setBusy(true);
+    try {
+      const power = Number(powerKw);
+      const powerNum = Number.isFinite(power) && power > 0 ? power : undefined;
+      const payload: Omit<StationSuggestion, "id" | "createdAt"> = {
+        coordinates,
+        name: trimmed,
+        city: city.trim() || undefined,
+        address: address.trim() || undefined,
+        connectors,
+        powerKw: powerNum,
+        notes: notes.trim() || undefined,
+        photoDataUrl: photoDataUrl ?? undefined
+      };
+      const suggestion = addPendingSuggestion(payload);
+      const approvalUrl = makeSuggestionApprovalUrl(suggestion);
 
-    const notify = await notifyAdminNewSuggestion({ approvalUrl, suggestion });
-    if (notify.ok) {
-      toast.success("Submitted!", { description: "Sent to admin for approval." });
-    } else {
-      // Fallback: copy the approval link so the user can manually send it to admin.
+      const notify = await notifyAdminNewSuggestion({ approvalUrl, suggestion });
       try {
         await navigator.clipboard.writeText(approvalUrl);
-        toast.success("Suggestion saved. Link copied!", {
-          description: "Auto-email is not configured. Send the copied link to the admin."
-        });
       } catch {
-        toast.message("Suggestion saved.", { description: "Please share the approval link with the admin." });
+        // ok
       }
+
+      if (notify.ok) {
+        toast.success("Submitted!", {
+          description:
+            notify.reason === "opaque_no_cors"
+              ? "Notification sent (unverified). Approval link copied."
+              : "Sent to admin for approval. Approval link copied."
+        });
+      } else {
+        toast.message("Suggestion saved", {
+          description:
+            notify.reason === "admin_notify_endpoint_not_configured"
+              ? "Email notifications are not configured for this deployment. Approval link copied—send it to the admin."
+              : "Could not notify admin automatically. Approval link copied—send it to the admin."
+        });
+      }
+
       reset();
       onOpenChange(false);
-      return;
-    }
-    try {
-      await navigator.clipboard.writeText(approvalUrl);
     } catch {
-      // ok
+      toast.error("Failed to submit suggestion.");
+    } finally {
+      setBusy(false);
     }
-    reset();
-    onOpenChange(false);
   };
 
   if (!open) return null;
@@ -130,11 +143,11 @@ export default function SuggestStationDialog({ open, onOpenChange, coordinates }
       role="dialog"
       aria-modal="false"
       className={[
-        "absolute z-20 rounded-xl border bg-background/95 backdrop-blur shadow-soft pointer-events-auto",
-        isMobile ? "left-3 right-3 bottom-3 max-h-[55vh]" : "left-4 top-4 w-[380px] max-h-[70vh]"
+        "absolute z-20 rounded-xl border bg-background/95 backdrop-blur shadow-soft pointer-events-auto overflow-hidden flex flex-col",
+        isMobile ? "left-3 right-3 bottom-3 max-h-[62vh]" : "left-4 top-4 w-[400px] max-h-[72vh]"
       ].join(" ")}
     >
-      <div className="flex items-start justify-between gap-3 px-4 pt-4">
+      <div className="flex items-start justify-between gap-3 px-4 pt-4 pb-3 border-b bg-background/60">
         <div className="min-w-0">
           <div className="text-base font-semibold">Suggest a new charging station</div>
           <div className="text-xs text-muted-foreground">Reviewed by admin before appearing on the map.</div>
@@ -152,8 +165,19 @@ export default function SuggestStationDialog({ open, onOpenChange, coordinates }
         </button>
       </div>
 
-      <div className="px-4 pb-4 pt-3 overflow-y-auto">
-        <div className="space-y-3">
+      <div className="px-4 pt-3 pb-4 overflow-y-auto flex-1">
+        <div className="space-y-4">
+          {!notifyConfigured ? (
+            <Alert className="bg-muted/20">
+              <AlertTitle>Email notification not configured</AlertTitle>
+              <AlertDescription>
+                This site is static, so it can’t send email by itself. When you submit, we’ll copy an approval link that
+                you can send to the admin (or configure <code>VITE_ADMIN_NOTIFY_ENDPOINT</code> in GitHub Actions secrets
+                to a webhook provider that forwards to your inbox).
+              </AlertDescription>
+            </Alert>
+          ) : null}
+
           <div className="rounded-lg border bg-muted/20 px-3 py-2 text-xs text-muted-foreground flex items-center justify-between gap-2">
             <div className="font-medium text-foreground">Location</div>
             <div className="font-mono">{coordsLabel ?? "Drag pin to set"}</div>
@@ -198,6 +222,8 @@ export default function SuggestStationDialog({ open, onOpenChange, coordinates }
                     value={powerKw}
                     onChange={(e) => setPowerKw(e.target.value)}
                     inputMode="numeric"
+                    type="number"
+                    min={1}
                     placeholder="e.g. 150"
                   />
                 </div>
@@ -218,53 +244,83 @@ export default function SuggestStationDialog({ open, onOpenChange, coordinates }
 
               <div className="space-y-2">
                 <label className="text-xs text-muted-foreground">Photo</label>
-                <input
-                  type="file"
-                  accept="image/*"
-                  onChange={async (e) => {
-                    const file = e.target.files?.[0];
-                    if (!file) return;
-                    if (file.size > 1_500_000) {
-                      toast.error("Image too large. Please upload a smaller photo (<1.5MB).");
-                      return;
-                    }
-                    setBusy(true);
-                    try {
-                      const dataUrl = await fileToDataUrl(file);
-                      if (!dataUrl.startsWith("data:image/")) {
-                        toast.error("Unsupported image format.");
+                <div className="flex items-center gap-2">
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={async (e) => {
+                      const file = e.target.files?.[0];
+                      if (!file) return;
+                      if (file.size > 1_500_000) {
+                        toast.error("Image too large. Please upload a smaller photo (<1.5MB).");
                         return;
                       }
-                      setPhotoDataUrl(dataUrl);
-                    } catch {
-                      toast.error("Failed to load image.");
-                    } finally {
-                      setBusy(false);
-                    }
-                  }}
-                />
+                      setBusy(true);
+                      try {
+                        const dataUrl = await fileToDataUrl(file);
+                        if (!dataUrl.startsWith("data:image/")) {
+                          toast.error("Unsupported image format.");
+                          return;
+                        }
+                        setPhotoDataUrl(dataUrl);
+                      } catch {
+                        toast.error("Failed to load image.");
+                      } finally {
+                        setBusy(false);
+                      }
+                    }}
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="gap-2"
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={busy}
+                  >
+                    {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <ImagePlus className="h-4 w-4" />}
+                    {photoDataUrl ? "Replace photo" : "Upload photo"}
+                  </Button>
+                  {photoDataUrl ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      aria-label="Remove photo"
+                      onClick={() => setPhotoDataUrl(null)}
+                      disabled={busy}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  ) : null}
+                </div>
                 {photoDataUrl ? (
                   <img src={photoDataUrl} alt="Suggestion preview" className="rounded-lg border max-h-32 object-cover" />
                 ) : null}
               </div>
             </CollapsibleContent>
           </Collapsible>
+        </div>
+      </div>
 
-          <div className="flex items-center justify-end gap-2 pt-2">
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => {
-                reset();
-                onOpenChange(false);
-              }}
-            >
-              Cancel
-            </Button>
-            <Button type="button" onClick={handleSubmit} disabled={busy}>
-              Submit
-            </Button>
-          </div>
+      <div className="px-4 py-3 border-t bg-background/60">
+        <div className="flex items-center justify-end gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => {
+              reset();
+              onOpenChange(false);
+            }}
+            disabled={busy}
+          >
+            Cancel
+          </Button>
+          <Button type="button" onClick={handleSubmit} disabled={busy || !coordinates || !name.trim()}>
+            {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+            Submit
+          </Button>
         </div>
       </div>
     </div>
