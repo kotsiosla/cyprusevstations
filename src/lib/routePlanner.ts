@@ -30,6 +30,10 @@ export type RoutePlanInput = {
   fastOnly: boolean;
   availableOnly: boolean;
   maxStops: number;
+  // Optional live routing override (e.g. OSRM).
+  routePolyline?: LonLat[];
+  routeDistanceKm?: number;
+  routeDurationMin?: number;
 };
 
 export type RoutePlanLeg = {
@@ -54,6 +58,8 @@ export type RoutePlanResult = {
   template: RouteTemplate;
   polyline: LonLat[];
   totalDistanceKm: number;
+  estimatedDriveMinutes?: number;
+  routingMode: "approx" | "live";
   estimatedArrivalSocPctIfNoCharging: number;
   canReachWithoutCharging: boolean;
   legs: RoutePlanLeg[];
@@ -239,10 +245,14 @@ export function planRouteAwareCharging(
   const vehicleMaxKw = clamp(safeNumber(input.vehicleMaxChargeKw, 100), 7, 400);
   const maxStops = clamp(safeNumber(input.maxStops, 3), 0, 8);
 
-  const polyline = template.polyline;
-  const roadFactor = 1.12; // polyline underestimates real road distance
+  const polyline = input.routePolyline && input.routePolyline.length >= 2 ? input.routePolyline : template.polyline;
   const rawDistanceKm = polylineDistanceKm(polyline);
-  const totalDistanceKm = rawDistanceKm * roadFactor;
+  const totalDistanceKm =
+    typeof input.routeDistanceKm === "number" && Number.isFinite(input.routeDistanceKm) && input.routeDistanceKm > 0
+      ? input.routeDistanceKm
+      : rawDistanceKm * 1.12; // fallback: polyline underestimates real road distance
+  const roadFactor = rawDistanceKm > 0 ? totalDistanceKm / rawDistanceKm : 1;
+  const routingMode = input.routePolyline && input.routeDistanceKm ? ("live" as const) : ("approx" as const);
 
   const energyPctForTrip = (totalDistanceKm * (consumption / 100) / batteryKwh) * 100;
   const estimatedArrivalSocPctIfNoCharging = currentSoc - energyPctForTrip;
@@ -254,7 +264,7 @@ export function planRouteAwareCharging(
   if (input.templateId.includes("troodos")) {
     warnings.push("Η διαδρομή Τρόοδος έχει υψομετρικές/θερμοκρασιακές επιδράσεις—η κατανάλωση μπορεί να είναι υψηλότερη.");
   }
-  warnings.push("Οι αποστάσεις είναι εκτίμηση (χωρίς live routing).");
+  warnings.push(routingMode === "live" ? "Live routing: OSRM (best effort)." : "Οι αποστάσεις είναι εκτίμηση (χωρίς live routing).");
 
   if (canReachWithoutCharging) {
     legs.push({
@@ -269,6 +279,11 @@ export function planRouteAwareCharging(
       template,
       polyline,
       totalDistanceKm: round1(totalDistanceKm),
+      estimatedDriveMinutes:
+        typeof input.routeDurationMin === "number" && Number.isFinite(input.routeDurationMin)
+          ? Math.round(input.routeDurationMin)
+          : undefined,
+      routingMode,
       estimatedArrivalSocPctIfNoCharging: round1(estimatedArrivalSocPctIfNoCharging),
       canReachWithoutCharging: true,
       legs,
@@ -300,6 +315,11 @@ export function planRouteAwareCharging(
       template,
       polyline,
       totalDistanceKm: round1(totalDistanceKm),
+      estimatedDriveMinutes:
+        typeof input.routeDurationMin === "number" && Number.isFinite(input.routeDurationMin)
+          ? Math.round(input.routeDurationMin)
+          : undefined,
+      routingMode,
       estimatedArrivalSocPctIfNoCharging: round1(estimatedArrivalSocPctIfNoCharging),
       canReachWithoutCharging: false,
       legs,
@@ -422,6 +442,11 @@ export function planRouteAwareCharging(
     template,
     polyline,
     totalDistanceKm: round1(totalDistanceKm),
+    estimatedDriveMinutes:
+      typeof input.routeDurationMin === "number" && Number.isFinite(input.routeDurationMin)
+        ? Math.round(input.routeDurationMin)
+        : undefined,
+    routingMode,
     estimatedArrivalSocPctIfNoCharging: round1(estimatedArrivalSocPctIfNoCharging),
     canReachWithoutCharging: false,
     legs,

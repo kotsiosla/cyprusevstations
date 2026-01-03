@@ -1,10 +1,11 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { ChargingStation } from "@/lib/chargingStations";
 import {
   CYPRUS_ROUTE_TEMPLATES,
   planRouteAwareCharging,
   type RoutePlanResult
 } from "@/lib/routePlanner";
+import { fetchOsrmRoute, type RoutedPath } from "@/lib/routing";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -41,8 +42,44 @@ export default function RoutePlanner({ stations, onApplyToMap, onSelectStation }
   const [fastOnly, setFastOnly] = useState(true);
   const [availableOnly, setAvailableOnly] = useState(false);
   const [maxStops, setMaxStops] = useState("3");
+  const [useLiveRouting, setUseLiveRouting] = useState(true);
+  const [routingStatus, setRoutingStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
+  const [routedPath, setRoutedPath] = useState<RoutedPath | null>(null);
+
+  const selectedTemplate = useMemo(
+    () => CYPRUS_ROUTE_TEMPLATES.find((t) => t.id === templateId) ?? CYPRUS_ROUTE_TEMPLATES[0],
+    [templateId]
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    const run = async () => {
+      if (!useLiveRouting) {
+        setRoutedPath(null);
+        setRoutingStatus("idle");
+        return;
+      }
+      setRoutingStatus("loading");
+      const res = await fetchOsrmRoute(selectedTemplate.polyline);
+      if (cancelled) return;
+      if (res) {
+        setRoutedPath(res);
+        setRoutingStatus("ready");
+      } else {
+        setRoutedPath(null);
+        setRoutingStatus("error");
+      }
+    };
+    run();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedTemplate, useLiveRouting]);
 
   const result: RoutePlanResult = useMemo(() => {
+    const routePolyline = routedPath?.polyline;
+    const routeDistanceKm = routedPath?.distanceKm;
+    const routeDurationMin = routedPath?.durationMin;
     return planRouteAwareCharging(stations, {
       templateId,
       currentSocPct: numberOr(currentSocPct, 55),
@@ -54,7 +91,10 @@ export default function RoutePlanner({ stations, onApplyToMap, onSelectStation }
       corridorKm: numberOr(corridorKm, 10),
       fastOnly,
       availableOnly,
-      maxStops: numberOr(maxStops, 3)
+      maxStops: numberOr(maxStops, 3),
+      routePolyline,
+      routeDistanceKm,
+      routeDurationMin
     });
   }, [
     stations,
@@ -68,7 +108,8 @@ export default function RoutePlanner({ stations, onApplyToMap, onSelectStation }
     corridorKm,
     fastOnly,
     availableOnly,
-    maxStops
+    maxStops,
+    routedPath
   ]);
 
   const template = result.template;
@@ -109,6 +150,23 @@ export default function RoutePlanner({ stations, onApplyToMap, onSelectStation }
                 <Badge variant="secondary">{template.end.label}</Badge>
               </div>
               {template.description ? <p className="mt-2">{template.description}</p> : null}
+              <div className="mt-3 flex items-center justify-between gap-3 rounded-md border bg-background/60 px-3 py-2">
+                <span className="text-xs">Live routing (beta)</span>
+                <Switch checked={useLiveRouting} onCheckedChange={setUseLiveRouting} />
+              </div>
+              {useLiveRouting ? (
+                <p className="mt-2 text-[0.7rem] text-muted-foreground">
+                  {routingStatus === "loading"
+                    ? "Routing: loading…"
+                    : routingStatus === "ready"
+                      ? "Routing: OSRM (live)"
+                      : routingStatus === "error"
+                        ? "Routing: failed → using estimate"
+                        : "Routing: idle"}
+                </p>
+              ) : (
+                <p className="mt-2 text-[0.7rem] text-muted-foreground">Routing: estimate</p>
+              )}
             </div>
           </div>
 
@@ -189,6 +247,12 @@ export default function RoutePlanner({ stations, onApplyToMap, onSelectStation }
                   <BatteryCharging className="h-4 w-4" />
                   {result.totalDistanceKm.toFixed(1)} km
                 </Badge>
+                {typeof result.estimatedDriveMinutes === "number" ? (
+                  <Badge variant="outline" className="gap-2">
+                    <Clock className="h-4 w-4" />
+                    ~{result.estimatedDriveMinutes} min drive
+                  </Badge>
+                ) : null}
                 <Badge
                   variant="outline"
                   className={cn(
