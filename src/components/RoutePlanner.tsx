@@ -551,14 +551,35 @@ export default function RoutePlanner({ stations, onApplyToMap, onSelectStation }
     const destStr = routeMode === "custom" ? toLatLon(destination) : toLatLonFromCoord(template.end.coordinates);
     if (!originStr || !destStr) return null;
 
+    // Prefer "path-style" URLs for better compatibility in some browsers/webviews.
+    // Format: https://www.google.com/maps/dir/<origin>/<wp1>/<wp2>/<destination>
+    // (uses lat,lon segments)
+    const segments = [originStr, ...waypoints, destStr].map((s) => encodeURIComponent(s));
+    return `https://www.google.com/maps/dir/${segments.join("/")}`;
+  }, [routeMode, origin, destination, stops, template]);
+
+  const openStreetMapUrl = useMemo(() => {
+    const toLatLon = (p: PlaceValue) => (p ? `${p.coordinates[1]},${p.coordinates[0]}` : null);
+    const toLatLonFromCoord = (c: [number, number]) => `${c[1]},${c[0]}`;
+
+    const originStr = routeMode === "custom" ? toLatLon(origin) : toLatLonFromCoord(template.start.coordinates);
+    const destStr = routeMode === "custom" ? toLatLon(destination) : toLatLonFromCoord(template.end.coordinates);
+    if (!originStr || !destStr) return null;
+
+    const via = routeMode === "custom"
+      ? (stops.map((s) => s.place).filter(Boolean) as Array<NonNullable<PlaceValue>>)
+          .slice(0, 8)
+          .map((p) => toLatLon(p))
+          .filter((x): x is string => Boolean(x))
+      : template.polyline.slice(1, -1).slice(0, 3).map(toLatLonFromCoord);
+
+    // OSM directions expects route as "lat,lon;lat,lon;..."
+    const route = [originStr, ...via, destStr].join(";");
     const params = new URLSearchParams({
-      api: "1",
-      travelmode: "driving",
-      origin: originStr,
-      destination: destStr
+      engine: "fossgis_osrm_car",
+      route
     });
-    if (waypoints.length) params.set("waypoints", waypoints.join("|"));
-    return `https://www.google.com/maps/dir/?${params.toString()}`;
+    return `https://www.openstreetmap.org/directions?${params.toString()}`;
   }, [routeMode, origin, destination, stops, template]);
 
   const handleDragEnd = (event: DragEndEvent) => {
@@ -942,11 +963,23 @@ export default function RoutePlanner({ stations, onApplyToMap, onSelectStation }
               {googleMapsUrl ? (
                 <a
                   href={googleMapsUrl}
+                  target="_blank"
                   rel="noopener noreferrer"
                   className={cn(buttonVariants({ variant: "outline", size: "default" }), "gap-2")}
                 >
                   <MapIcon className="h-4 w-4" />
-                  Open in Google Maps
+                  Google Maps
+                </a>
+              ) : null}
+              {openStreetMapUrl ? (
+                <a
+                  href={openStreetMapUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className={cn(buttonVariants({ variant: "outline", size: "default" }), "gap-2")}
+                >
+                  <MapIcon className="h-4 w-4" />
+                  OpenStreetMap
                 </a>
               ) : null}
               <Button
