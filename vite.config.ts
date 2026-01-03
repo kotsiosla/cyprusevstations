@@ -6,8 +6,14 @@ import { VitePWA } from "vite-plugin-pwa";
 
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => {
-  // Use root path for Lovable deployment, only use /cyprusevstations/ for GitHub Pages
-  const base = "/";
+  // Base path must match the deployment location.
+  // - Lovable/custom domains: "/"
+  // - GitHub Pages project site: "/<repo>/"
+  //
+  // GitHub Actions sets GITHUB_REPOSITORY="owner/repo" during Pages builds.
+  const repoName = process.env.GITHUB_REPOSITORY?.split("/")[1];
+  const isGitHubActions = process.env.GITHUB_ACTIONS === "true";
+  const base = isGitHubActions && repoName ? `/${repoName}/` : "/";
 
   return {
     base,
