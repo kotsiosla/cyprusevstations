@@ -4,19 +4,23 @@ import { Badge } from "@/components/ui/badge";
 import { BatteryCharging, MapPin, ArrowRight, Clock, Radar, CircleDot, Navigation } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import type { VehicleProfile } from "@/lib/vehicleProfiles";
+import CommunityFeedback from "@/components/CommunityFeedback";
 
 interface ChargingStationListProps {
   stations: ChargingStation[];
   selectedStation?: ChargingStation | null;
   onSelect: (station: ChargingStation) => void;
   userLocation?: [number, number] | null;
+  vehicleProfile?: VehicleProfile | null;
 }
 
 const ChargingStationList = ({
   stations,
   selectedStation,
   onSelect,
-  userLocation
+  userLocation,
+  vehicleProfile
 }: ChargingStationListProps) => {
   const availabilityStyles = (availability?: ChargingStation["availability"]) => {
     switch (availability) {
@@ -181,6 +185,8 @@ const ChargingStationList = ({
                 Directions
               </Button>
             </div>
+
+            <CommunityFeedback station={station} vehicleProfile={vehicleProfile} />
 
             {station.openingHours && (
               <div className="mt-3 flex items-center gap-2 text-xs text-muted-foreground">

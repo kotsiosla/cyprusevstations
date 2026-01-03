@@ -7,6 +7,8 @@ import ChargingStationList from '@/components/ChargingStationList';
 import RoutePlanner from '@/components/RoutePlanner';
 import { fetchChargingStations, sampleChargingStations, ChargingStation } from '@/lib/chargingStations';
 import { fetchOpenChargeMapDetailsByCoords, parseOpenChargeMapUsageCost } from '@/lib/openChargeMap';
+import { VEHICLE_PROFILES, type VehicleProfile, stationFitsVehicle, stationMeetsMinPower } from '@/lib/vehicleProfiles';
+import { getWatchState, runAlertChecks, setAlertsEnabled } from '@/lib/alerts';
 import { Helmet } from 'react-helmet-async';
 import { BatteryCharging, Heart, MapPin, Navigation } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -41,6 +43,13 @@ const Index = () => {
     stopIds: string[];
   } | null>(null);
 
+  const [vehicleProfileId, setVehicleProfileId] = useState<string>('any');
+  const [onlyCompatible, setOnlyCompatible] = useState(false);
+  const [minPowerKw, setMinPowerKw] = useState('0');
+
+  const [alertsEnabled, setAlertsEnabledState] = useState(false);
+  const [watchedCount, setWatchedCount] = useState(0);
+
   useEffect(() => {
     const loadStations = async () => {
       try {
@@ -59,6 +68,39 @@ const Index = () => {
 
     loadStations();
   }, []);
+
+  useEffect(() => {
+    const refresh = () => {
+      const state = getWatchState();
+      setAlertsEnabledState(state.enabled);
+      setWatchedCount(state.rules.length);
+    };
+    refresh();
+    const onStorage = () => refresh();
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, []);
+
+  useEffect(() => {
+    if (!alertsEnabled || watchedCount === 0) return;
+    const intervalMs = 3 * 60 * 1000;
+    const id = window.setInterval(async () => {
+      try {
+        const data = await fetchChargingStations();
+        if (data.length) {
+          runAlertChecks(data);
+          setStations(data);
+        }
+      } catch {
+        // ignore polling errors
+      }
+    }, intervalMs);
+    return () => window.clearInterval(id);
+  }, [alertsEnabled, watchedCount]);
+
+  const vehicleProfile: VehicleProfile | null = useMemo(() => {
+    return VEHICLE_PROFILES.find((p) => p.id === vehicleProfileId) ?? VEHICLE_PROFILES[0] ?? null;
+  }, [vehicleProfileId]);
 
   useEffect(() => {
     const loadOcm = async () => {
@@ -140,13 +182,18 @@ const Index = () => {
       const matchesOpenNow = !openNowOnly || station.open24_7;
       const powerKw = parsePowerKw(station.power);
       const matchesFast = !fastOnly || (powerKw !== null && powerKw >= 50);
+      const minKw = Number(minPowerKw);
+      const matchesMinPower = !minKw || stationMeetsMinPower(station, minKw);
+      const matchesVehicle = !onlyCompatible || !vehicleProfile ? true : stationFitsVehicle(station, vehicleProfile);
 
       return (
         matchesQuery &&
         matchesConnector &&
         matchesAvailability &&
         matchesOpenNow &&
-        matchesFast
+        matchesFast &&
+        matchesMinPower &&
+        matchesVehicle
       );
     });
 
@@ -161,6 +208,9 @@ const Index = () => {
     availabilityFilter,
     openNowOnly,
     fastOnly,
+    onlyCompatible,
+    minPowerKw,
+    vehicleProfile,
     userLocation
   ]);
 
@@ -462,6 +512,18 @@ const Index = () => {
                   value={searchQuery}
                   onChange={(event) => setSearchQuery(event.target.value)}
                 />
+                <Select value={vehicleProfileId} onValueChange={setVehicleProfileId}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="My EV" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {VEHICLE_PROFILES.map((p) => (
+                      <SelectItem key={p.id} value={p.id}>
+                        {p.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
                 <Select value={selectedConnector} onValueChange={setSelectedConnector}>
                   <SelectTrigger>
                     <SelectValue placeholder="Connector type" />
@@ -487,6 +549,19 @@ const Index = () => {
                     <SelectItem value="unknown">Unknown</SelectItem>
                   </SelectContent>
                 </Select>
+                <Select value={minPowerKw} onValueChange={setMinPowerKw}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Min power" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="0">Any power</SelectItem>
+                    <SelectItem value="7">7 kW+</SelectItem>
+                    <SelectItem value="11">11 kW+</SelectItem>
+                    <SelectItem value="22">22 kW+</SelectItem>
+                    <SelectItem value="50">50 kW+ (DC)</SelectItem>
+                    <SelectItem value="100">100 kW+</SelectItem>
+                  </SelectContent>
+                </Select>
                 <div className="flex items-center justify-between gap-3 rounded-md border border-input px-3 py-2">
                   <span className="text-sm">Open 24/7 only</span>
                   <Switch checked={openNowOnly} onCheckedChange={setOpenNowOnly} />
@@ -495,14 +570,33 @@ const Index = () => {
                   <span className="text-sm">Fast chargers (50kW+)</span>
                   <Switch checked={fastOnly} onCheckedChange={setFastOnly} />
                 </div>
+                <div className="flex items-center justify-between gap-3 rounded-md border border-input px-3 py-2">
+                  <span className="text-sm">Fits my EV only</span>
+                  <Switch checked={onlyCompatible} onCheckedChange={setOnlyCompatible} />
+                </div>
+                <div className="flex items-center justify-between gap-3 rounded-md border border-input px-3 py-2">
+                  <span className="text-sm">
+                    Alerts {watchedCount ? `(${watchedCount})` : ''}
+                  </span>
+                  <Switch
+                    checked={alertsEnabled}
+                    onCheckedChange={(next) => {
+                      setAlertsEnabled(next);
+                      setAlertsEnabledState(next);
+                    }}
+                  />
+                </div>
                 <Button
                   variant="outline"
                   onClick={() => {
                     setSearchQuery('');
+                    setVehicleProfileId('any');
                     setSelectedConnector('all');
                     setAvailabilityFilter('all');
+                    setMinPowerKw('0');
                     setOpenNowOnly(false);
                     setFastOnly(false);
+                    setOnlyCompatible(false);
                   }}
                 >
                   Reset filters
@@ -515,6 +609,7 @@ const Index = () => {
                   selectedStation={selectedStation}
                   onSelect={setSelectedStation}
                   userLocation={userLocation}
+                  vehicleProfile={vehicleProfileId === 'any' ? null : vehicleProfile}
                 />
               </div>
             </div>
