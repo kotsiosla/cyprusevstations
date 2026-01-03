@@ -102,13 +102,20 @@ function normalizeAvailability(value?: string | number | boolean) {
   const normalized = String(value).toLowerCase().trim();
   const ocppAvailability = OCPP_STATUS_MAP[normalized];
   if (ocppAvailability) return ocppAvailability;
+  // Some feeds (e.g. Cyprus DATEX II) report operational state, not live occupancy.
+  // Treat these as unknown rather than implying availability.
   if (
-    ["available", "free", "yes", "open", "in_service", "operational", "working"].includes(
-      normalized
-    ) ||
+    normalized === "operational" ||
+    normalized === "in_service" ||
+    normalized === "in service" ||
+    normalized === "working"
+  ) {
+    return "unknown" as const;
+  }
+  if (
+    ["available", "free", "yes"].includes(normalized) ||
     normalized.includes("available") ||
-    normalized.includes("operational") ||
-    normalized.includes("working")
+    normalized.includes("free")
   ) {
     return "available" as const;
   }
