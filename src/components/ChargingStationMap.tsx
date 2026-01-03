@@ -3,6 +3,7 @@ import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { Crosshair, Home, SlidersHorizontal, ZoomIn, ZoomOut } from "lucide-react";
 import { ChargingStation } from "@/lib/chargingStations";
+import type { FeatureCollection, Feature, LineString, Point } from "geojson";
 
 interface ChargingStationMapProps {
   stations: ChargingStation[];
@@ -10,6 +11,8 @@ interface ChargingStationMapProps {
   onStationSelect?: (station: ChargingStation) => void;
   onRequestLocation?: () => void;
   userLocation?: [number, number] | null;
+  routePolyline?: [number, number][] | null;
+  highlightStationIds?: string[];
 }
 
 const defaultView = {
@@ -28,7 +31,9 @@ export default function ChargingStationMap({
   selectedStation,
   onStationSelect,
   onRequestLocation,
-  userLocation
+  userLocation,
+  routePolyline,
+  highlightStationIds
 }: ChargingStationMapProps) {
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
@@ -36,6 +41,49 @@ export default function ChargingStationMap({
   const userMarkerRef = useRef<maplibregl.Marker | null>(null);
   const stationsRef = useRef<ChargingStation[]>(stations);
   const [showStations, setShowStations] = useState(true);
+
+  const routeLineGeoJson = useMemo(() => {
+    if (!routePolyline || routePolyline.length < 2) {
+      return { type: "FeatureCollection", features: [] } satisfies FeatureCollection<LineString>;
+    }
+    const feature: Feature<LineString> = {
+      type: "Feature",
+      geometry: { type: "LineString", coordinates: routePolyline },
+      properties: {}
+    };
+    return { type: "FeatureCollection", features: [feature] } satisfies FeatureCollection<LineString>;
+  }, [routePolyline]);
+
+  const routeAnchorsGeoJson = useMemo(() => {
+    if (!routePolyline || routePolyline.length < 2) {
+      return { type: "FeatureCollection", features: [] } satisfies FeatureCollection<Point, { kind: string }>;
+    }
+    const start = routePolyline[0];
+    const end = routePolyline[routePolyline.length - 1];
+    const features: Array<Feature<Point, { kind: string }>> = [
+      { type: "Feature", geometry: { type: "Point", coordinates: start }, properties: { kind: "start" } },
+      { type: "Feature", geometry: { type: "Point", coordinates: end }, properties: { kind: "end" } }
+    ];
+    return { type: "FeatureCollection", features } satisfies FeatureCollection<Point, { kind: string }>;
+  }, [routePolyline]);
+
+  const routeStopsGeoJson = useMemo(() => {
+    const ids = new Set(highlightStationIds ?? []);
+    if (!ids.size) {
+      return { type: "FeatureCollection", features: [] } satisfies FeatureCollection<
+        Point,
+        { id: string; name: string }
+      >;
+    }
+    const features: Array<Feature<Point, { id: string; name: string }>> = stations
+      .filter((s) => ids.has(s.id))
+      .map((station) => ({
+        type: "Feature",
+        geometry: { type: "Point", coordinates: station.coordinates },
+        properties: { id: station.id, name: station.name }
+      }));
+    return { type: "FeatureCollection", features } satisfies FeatureCollection<Point, { id: string; name: string }>;
+  }, [stations, highlightStationIds]);
 
   const stationGeoJson = useMemo(() => {
     return {
@@ -150,6 +198,67 @@ export default function ChargingStationMap({
         }
       });
 
+      // Route overlay sources/layers (optional).
+      if (!map.getSource("route-line")) {
+        map.addSource("route-line", { type: "geojson", data: routeLineGeoJson });
+        map.addLayer({
+          id: "route-line",
+          type: "line",
+          source: "route-line",
+          paint: {
+            "line-color": "#22c55e",
+            "line-width": 4,
+            "line-opacity": 0.85
+          }
+        });
+      }
+
+      if (!map.getSource("route-anchors")) {
+        map.addSource("route-anchors", { type: "geojson", data: routeAnchorsGeoJson });
+        map.addLayer({
+          id: "route-anchors",
+          type: "circle",
+          source: "route-anchors",
+          paint: {
+            "circle-color": [
+              "match",
+              ["get", "kind"],
+              "start",
+              "#0ea5e9",
+              "end",
+              "#8b5cf6",
+              "#64748b"
+            ],
+            "circle-radius": 7,
+            "circle-stroke-width": 2,
+            "circle-stroke-color": "#0f172a"
+          }
+        });
+      }
+
+      if (!map.getSource("route-stops")) {
+        map.addSource("route-stops", { type: "geojson", data: routeStopsGeoJson });
+        map.addLayer({
+          id: "route-stops",
+          type: "circle",
+          source: "route-stops",
+          paint: {
+            "circle-color": "#f97316",
+            "circle-radius": 7,
+            "circle-stroke-width": 2,
+            "circle-stroke-color": "#0f172a"
+          }
+        });
+      }
+
+      map.on("click", "route-stops", (event) => {
+        const feature = event.features?.[0];
+        if (!feature) return;
+        const stationId = String(feature.properties?.id ?? "");
+        const station = stationsRef.current.find((item) => item.id === stationId);
+        if (station) onStationSelect?.(station);
+      });
+
       map.on("click", "clusters", (event) => {
         const features = map.queryRenderedFeatures(event.point, { layers: ["clusters"] });
         const clusterId = features[0]?.properties?.cluster_id;
@@ -183,6 +292,13 @@ export default function ChargingStationMap({
       map.on("mouseleave", "unclustered-point", () => {
         map.getCanvas().style.cursor = "";
       });
+
+      map.on("mouseenter", "route-stops", () => {
+        map.getCanvas().style.cursor = "pointer";
+      });
+      map.on("mouseleave", "route-stops", () => {
+        map.getCanvas().style.cursor = "";
+      });
     });
 
     return () => {
@@ -208,6 +324,13 @@ export default function ChargingStationMap({
       source.setData(stationGeoJson);
     }
 
+    const routeLineSource = map.getSource("route-line") as maplibregl.GeoJSONSource | undefined;
+    if (routeLineSource) routeLineSource.setData(routeLineGeoJson);
+    const anchorsSource = map.getSource("route-anchors") as maplibregl.GeoJSONSource | undefined;
+    if (anchorsSource) anchorsSource.setData(routeAnchorsGeoJson);
+    const stopsSource = map.getSource("route-stops") as maplibregl.GeoJSONSource | undefined;
+    if (stopsSource) stopsSource.setData(routeStopsGeoJson);
+
     if (userLocation) {
       if (!userMarkerRef.current) {
         const userMarker = document.createElement("div");
@@ -222,7 +345,7 @@ export default function ChargingStationMap({
       userMarkerRef.current.remove();
       userMarkerRef.current = null;
     }
-  }, [stationGeoJson, userLocation]);
+  }, [stationGeoJson, userLocation, routeLineGeoJson, routeAnchorsGeoJson, routeStopsGeoJson]);
 
   useEffect(() => {
     const map = mapRef.current;

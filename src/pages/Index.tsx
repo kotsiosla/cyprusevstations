@@ -4,6 +4,7 @@ import HeroSection from '@/components/HeroSection';
 import StatsSection from '@/components/StatsSection';
 import ChargingStationMap from '@/components/ChargingStationMap';
 import ChargingStationList from '@/components/ChargingStationList';
+import RoutePlanner from '@/components/RoutePlanner';
 import { fetchChargingStations, sampleChargingStations, ChargingStation } from '@/lib/chargingStations';
 import { fetchOpenChargeMapDetailsByCoords, parseOpenChargeMapUsageCost } from '@/lib/openChargeMap';
 import { Helmet } from 'react-helmet-async';
@@ -33,6 +34,11 @@ const Index = () => {
     station: ChargingStation;
     rate: number;
     mode: 'any' | 'ac' | 'dc';
+  } | null>(null);
+  const [routeOverlay, setRouteOverlay] = useState<{
+    templateId: string;
+    polyline: [number, number][];
+    stopIds: string[];
   } | null>(null);
 
   useEffect(() => {
@@ -260,6 +266,31 @@ const Index = () => {
 
           <StatsSection />
 
+          {/* Route Planner Section */}
+          <section id="route" className="py-16 px-4 bg-muted/30">
+            <div className="container">
+              <div className="text-center mb-12">
+                <h2 className="font-display text-3xl sm:text-4xl font-bold mb-4">
+                  Route-aware charging (Κύπρος)
+                </h2>
+                <p className="text-muted-foreground max-w-2xl mx-auto">
+                  Ο EV driver δεν ψάχνει “έναν φορτιστή”—ψάχνει να φτάσει κάπου. Δες αν φτάνεις με το SOC σου, πού να
+                  φορτίσεις και για πόση ώρα.
+                </p>
+              </div>
+
+              <div className="max-w-5xl mx-auto">
+                <RoutePlanner
+                  stations={stations}
+                  onSelectStation={(station) => setSelectedStation(station)}
+                  onApplyToMap={({ templateId, polyline, suggestedStopStationIds }) => {
+                    setRouteOverlay({ templateId, polyline, stopIds: suggestedStopStationIds });
+                  }}
+                />
+              </div>
+            </div>
+          </section>
+
           {/* Map Section */}
           <section id="map" className="py-16 px-4">
             <div className="container">
@@ -316,7 +347,13 @@ const Index = () => {
                       <SelectItem value="50">Within 50 km</SelectItem>
                     </SelectContent>
                   </Select>
-                  <Select value={cheapestMode} onValueChange={(value) => setCheapestMode(value as any)}>
+                  <Select
+                    value={cheapestMode}
+                    onValueChange={(value) => {
+                      const next = value === 'any' || value === 'ac' || value === 'dc' ? value : 'any';
+                      setCheapestMode(next);
+                    }}
+                  >
                     <SelectTrigger className="w-full sm:w-[140px]">
                       <SelectValue placeholder="AC/DC" />
                     </SelectTrigger>
@@ -398,6 +435,8 @@ const Index = () => {
                   onStationSelect={setSelectedStation}
                   onRequestLocation={requestLocation}
                   userLocation={userLocation}
+                  routePolyline={routeOverlay?.polyline ?? null}
+                  highlightStationIds={routeOverlay?.stopIds ?? []}
                 />
               </div>
             </div>
