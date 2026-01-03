@@ -6,7 +6,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 import { toast } from "@/components/ui/sonner";
 import type { SuggestedConnector, StationSuggestion } from "@/lib/userSuggestions";
-import { addPendingSuggestion, makeSuggestionShareUrl } from "@/lib/userSuggestions";
+import { addPendingSuggestion, makeSuggestionApprovalUrl } from "@/lib/userSuggestions";
+import { notifyAdminNewSuggestion } from "@/lib/adminNotify";
 
 type Props = {
   open: boolean;
@@ -77,14 +78,29 @@ export default function SuggestStationDialog({ open, onOpenChange, coordinates }
       photoDataUrl: photoDataUrl ?? undefined
     };
     const suggestion = addPendingSuggestion(payload);
-    const shareUrl = makeSuggestionShareUrl(suggestion);
+    const approvalUrl = makeSuggestionApprovalUrl(suggestion);
+
+    const notify = await notifyAdminNewSuggestion({ approvalUrl, suggestion });
+    if (notify.ok) {
+      toast.success("Submitted!", { description: "Sent to admin for approval." });
+    } else {
+      // Fallback: copy the approval link so the user can manually send it to admin.
+      try {
+        await navigator.clipboard.writeText(approvalUrl);
+        toast.success("Suggestion saved. Link copied!", {
+          description: "Auto-email is not configured. Send the copied link to the admin."
+        });
+      } catch {
+        toast.message("Suggestion saved.", { description: "Please share the approval link with the admin." });
+      }
+      reset();
+      onOpenChange(false);
+      return;
+    }
     try {
-      await navigator.clipboard.writeText(shareUrl);
-      toast.success("Suggestion saved. Link copied!", {
-        description: "Send the copied link to the admin for approval."
-      });
+      await navigator.clipboard.writeText(approvalUrl);
     } catch {
-      toast.success("Suggestion saved.", { description: "Use the Share button to send it to the admin." });
+      // ok
     }
     reset();
     onOpenChange(false);

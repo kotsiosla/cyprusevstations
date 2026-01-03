@@ -133,6 +133,13 @@ export function makeSuggestionShareUrl(s: StationSuggestion, baseUrl?: string): 
   return `${origin}?admin=1&importSuggestion=${payload}`;
 }
 
+export function makeSuggestionApprovalUrl(s: StationSuggestion, baseUrl?: string): string {
+  const payload = toBase64Url(JSON.stringify({ v: 1, suggestion: s }));
+  const origin = baseUrl ?? (typeof window !== "undefined" ? window.location.origin + window.location.pathname : "");
+  // Admin-only link that auto-approves on open.
+  return `${origin}?admin=1&autoApprove=1&importSuggestion=${payload}`;
+}
+
 export function importSuggestionFromUrlParam(payload: string): StationSuggestion | null {
   try {
     const decoded = fromBase64Url(payload);

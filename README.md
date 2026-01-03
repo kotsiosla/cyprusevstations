@@ -64,6 +64,16 @@ This project is built with:
 
 Simply open [Lovable](https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID) and click on Share -> Publish.
 
+## Admin email notifications for user-submitted stations (no email shown publicly)
+
+This app is deployed as a static site (GitHub Pages), so it cannot send email by itself. To get an email every time a user suggests a new station, configure a form/webhook provider (e.g. Formspree/Getform/Pipedream) to forward submissions to your admin inbox.
+
+- Create a form/webhook endpoint with your provider.
+- Configure the provider to email **you** when it receives a submission.
+- Set a GitHub Actions secret named `VITE_ADMIN_NOTIFY_ENDPOINT` to the provider endpoint URL.
+
+When configured, user submissions will POST to that endpoint and your email will include an **admin approval link**. Opening the link as admin adds the station to the map as **User suggested (unverified)**.
+
 ## Can I connect a custom domain to my Lovable project?
 
 Yes, you can!

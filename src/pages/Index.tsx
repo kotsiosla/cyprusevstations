@@ -105,18 +105,34 @@ const Index = () => {
       const url = new URL(window.location.href);
       const payload = url.searchParams.get('importSuggestion');
       if (!payload) return;
+      const autoApprove = url.searchParams.get('autoApprove') === '1';
       const imported = importSuggestionFromUrlParam(payload);
       if (imported) {
-        toast.success('Suggestion imported', { description: 'It is now pending admin approval.' });
+        if (isAdmin && autoApprove) {
+          const approved = approveSuggestion(imported.id);
+          if (approved) {
+            setStations((prev) => {
+              const id = `user/${approved.id}`;
+              if (prev.some((x) => x.id === id)) return prev;
+              return [...prev, suggestionToChargingStation(approved)];
+            });
+            toast.success('Approved & added to map', { description: 'Shown as “User suggested (unverified)”.' });
+          } else {
+            toast.success('Suggestion imported', { description: 'It is now pending admin approval.' });
+          }
+        } else {
+          toast.success('Suggestion imported', { description: 'It is now pending admin approval.' });
+        }
       } else {
         toast.error('Invalid suggestion link');
       }
       url.searchParams.delete('importSuggestion');
+      url.searchParams.delete('autoApprove');
       window.history.replaceState({}, '', url.pathname + (url.searchParams.toString() ? `?${url.searchParams}` : ''));
     } catch {
       // ignore
     }
-  }, []);
+  }, [isAdmin]);
 
   useEffect(() => {
     const refresh = () => {
