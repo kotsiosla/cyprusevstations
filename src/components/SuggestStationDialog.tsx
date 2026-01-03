@@ -131,7 +131,7 @@ export default function SuggestStationDialog({ open, onOpenChange, coordinates }
         <div className="space-y-3">
           <div className="rounded-lg border bg-muted/20 px-3 py-2 text-xs text-muted-foreground flex items-center justify-between gap-2">
             <div className="font-medium text-foreground">Location</div>
-            <div className="font-mono">{coordsLabel ?? "Tap map to set"}</div>
+            <div className="font-mono">{coordsLabel ?? "Drag pin to set"}</div>
           </div>
 
           <div className="space-y-1">
