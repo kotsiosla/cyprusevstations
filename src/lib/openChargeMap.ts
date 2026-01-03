@@ -9,6 +9,20 @@ export type OpenChargeMapDetails = {
   ocmUrl?: string;
 };
 
+export type OpenChargeMapPoi = {
+  id: number;
+  name: string;
+  coordinates: [number, number]; // [lon, lat]
+  address?: string;
+  city?: string;
+  connections?: Array<{
+    connectionType?: string;
+    powerKw?: number;
+    quantity?: number;
+  }>;
+  details?: OpenChargeMapDetails;
+};
+
 const VITE_ENV = (import.meta as any)?.env ?? {};
 const OPENCHARGEMAP_API_KEY = VITE_ENV.VITE_OPENCHARGEMAP_API_KEY as string | undefined;
 const OPENCHARGEMAP_PROXY_URL = VITE_ENV.VITE_OPENCHARGEMAP_PROXY_URL as string | undefined;
@@ -59,7 +73,7 @@ function formatOpeningTimes(openingTimes: any): string | undefined {
   return undefined;
 }
 
-function parseDetails(poi: any): OpenChargeMapDetails {
+export function parseOpenChargeMapDetails(poi: any): OpenChargeMapDetails {
   const usageTypeTitle = poi?.UsageType?.Title;
   const isMembershipRequired =
     typeof poi?.UsageType?.IsMembershipRequired === "boolean" ? poi.UsageType.IsMembershipRequired : undefined;
@@ -121,7 +135,7 @@ export async function fetchOpenChargeMapDetailsByCoords(
     if (!res) return null;
     const data = await res.json().catch(() => null);
     const poi = Array.isArray(data) ? data[0] : null;
-    const details = poi ? parseDetails(poi) : null;
+     const details = poi ? parseOpenChargeMapDetails(poi) : null;
     if (details && typeof localStorage !== "undefined") {
       try {
         localStorage.setItem(cacheKey, JSON.stringify(details));
@@ -140,7 +154,7 @@ export async function fetchOpenChargeMapDetailsByCoords(
   if (!res) return null;
   const data = await res.json().catch(() => null);
   const poi = Array.isArray(data) ? data[0] : null;
-  const details = poi ? parseDetails(poi) : null;
+  const details = poi ? parseOpenChargeMapDetails(poi) : null;
 
   if (details && typeof localStorage !== "undefined") {
     try {
@@ -150,5 +164,130 @@ export async function fetchOpenChargeMapDetailsByCoords(
     }
   }
   return details;
+}
+
+function toNumber(value: unknown): number | undefined {
+  const n = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(n)) return undefined;
+  return n;
+}
+
+function toNonEmptyString(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed ? trimmed : undefined;
+}
+
+function readApiConfig() {
+  if (OPENCHARGEMAP_PROXY_URL) {
+    return { proxyUrl: OPENCHARGEMAP_PROXY_URL, apiKey: undefined as string | undefined };
+  }
+  return { proxyUrl: undefined as string | undefined, apiKey: OPENCHARGEMAP_API_KEY };
+}
+
+export async function fetchOpenChargeMapPoisByCountry(countryCode: string): Promise<OpenChargeMapPoi[]> {
+  const { proxyUrl, apiKey } = readApiConfig();
+  if (!proxyUrl && !apiKey) return [];
+
+  const upper = countryCode.trim().toUpperCase();
+  if (!upper) return [];
+
+  const cacheKey = `ocm_country_${upper}_v1`;
+  const cacheTtlMs = 24 * 60 * 60 * 1000; // 24h
+
+  const readCache = () => {
+    if (typeof localStorage === "undefined") return null;
+    const raw = localStorage.getItem(cacheKey);
+    if (!raw) return null;
+    try {
+      const parsed = JSON.parse(raw) as { fetchedAt: number; items: OpenChargeMapPoi[] };
+      if (!parsed?.fetchedAt || !Array.isArray(parsed.items)) return null;
+      if (Date.now() - parsed.fetchedAt > cacheTtlMs) return null;
+      return parsed.items;
+    } catch {
+      return null;
+    }
+  };
+
+  const writeCache = (items: OpenChargeMapPoi[]) => {
+    if (typeof localStorage === "undefined") return;
+    try {
+      localStorage.setItem(cacheKey, JSON.stringify({ fetchedAt: Date.now(), items }));
+    } catch {
+      // ignore quota / privacy errors
+    }
+  };
+
+  const cached = readCache();
+  if (cached?.length) return cached;
+
+  const params = new URLSearchParams({
+    output: "json",
+    countrycode: upper,
+    maxresults: "5000",
+    // We want friendly connector names without a second lookup.
+    compact: "false",
+    verbose: "true"
+  });
+
+  let url: string;
+  if (proxyUrl) {
+    url = `${proxyUrl.replace(/\/$/, "")}?${params.toString()}`;
+  } else {
+    params.set("key", apiKey!);
+    url = `${OCM_BASE_URL}?${params.toString()}`;
+  }
+
+  const res = await fetchWithRetries(url, 1);
+  if (!res) return [];
+  const data = await res.json().catch(() => null);
+  if (!Array.isArray(data)) return [];
+
+  const items = data
+    .map((poi: any): OpenChargeMapPoi | null => {
+      const id = toNumber(poi?.ID);
+      const name = toNonEmptyString(poi?.AddressInfo?.Title) ?? toNonEmptyString(poi?.AddressInfo?.AddressLine1);
+      const lat = toNumber(poi?.AddressInfo?.Latitude);
+      const lon = toNumber(poi?.AddressInfo?.Longitude);
+      if (!id || !name || lat === undefined || lon === undefined) return null;
+
+      const addressLine = toNonEmptyString(poi?.AddressInfo?.AddressLine1);
+      const town = toNonEmptyString(poi?.AddressInfo?.Town);
+      const address = [addressLine, town].filter(Boolean).join(", ") || undefined;
+
+      const connectionsRaw: any[] = Array.isArray(poi?.Connections) ? poi.Connections : [];
+      const connections =
+        connectionsRaw.length > 0
+          ? connectionsRaw
+              .map((c: any) => {
+                const connectionType =
+                  toNonEmptyString(c?.ConnectionType?.Title) ?? toNonEmptyString(c?.ConnectionType?.FormalName);
+                const powerKw = toNumber(c?.PowerKW);
+                const quantity = toNumber(c?.Quantity);
+                return {
+                  connectionType,
+                  powerKw,
+                  quantity
+                };
+              })
+              .filter((c) => c.connectionType || typeof c.powerKw === "number")
+          : undefined;
+
+      const details = parseOpenChargeMapDetails(poi);
+
+      return {
+        id,
+        name,
+        coordinates: [lon, lat],
+        address,
+        city: town,
+        connections,
+        details
+      };
+    })
+    .filter((item): item is OpenChargeMapPoi => Boolean(item));
+
+  if (items.length) writeCache(items);
+  return items;
 }
 

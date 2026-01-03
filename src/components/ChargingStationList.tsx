@@ -91,6 +91,11 @@ const ChargingStationList = ({
                       PlaceToPlug: {station.placeToPlugName}
                     </p>
                   )}
+                  {station.ocmName && (
+                    <p className="text-[0.7rem] text-muted-foreground truncate">
+                      OpenChargeMap: {station.ocmName}
+                    </p>
+                  )}
                   <p className="text-xs text-muted-foreground mt-1">
                     {station.operator ? `${station.operator} · ` : ""}
                     {station.city || station.address || "Cyprus"}

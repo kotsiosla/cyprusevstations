@@ -338,6 +338,11 @@ export default function ChargingStationMap({
                 selectedStation.placeToPlugName
               )}</div>`
             : "") +
+          (selectedStation.ocmName
+            ? `<div class="text-xs text-muted-foreground">OpenChargeMap: ${escapeHtml(
+                selectedStation.ocmName
+              )}</div>`
+            : "") +
           (selectedStation.address
             ? `<div class="text-xs text-muted-foreground">${selectedStation.address}</div>`
             : "") +
