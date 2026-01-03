@@ -6,9 +6,8 @@ import { VitePWA } from "vite-plugin-pwa";
 
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => {
-  const isProd = mode === "production";
-  // GitHub Pages publishes under /<repo>/, so assets must be prefixed.
-  const base = isProd ? "/cyprusevstations/" : "/";
+  // Use root path for Lovable deployment, only use /cyprusevstations/ for GitHub Pages
+  const base = "/";
 
   return {
     base,
