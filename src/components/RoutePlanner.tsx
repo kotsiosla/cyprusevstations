@@ -936,7 +936,7 @@ export default function RoutePlanner({ stations, onApplyToMap, onSelectStation }
               >
                 Apply to map
               </Button>
-              {googleMapsUrl ? (
+              {googleMapsUrl && isMobile ? (
                 <a
                   href={googleMapsUrl}
                   // Same-tab navigation is more reliable on desktop browsers that block new tabs/windows.
