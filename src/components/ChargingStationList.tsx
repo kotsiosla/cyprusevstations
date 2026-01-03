@@ -29,8 +29,13 @@ const ChargingStationList = ({
   };
 
   const availabilityLabel = (station: ChargingStation) => {
-    const availability = station.availability;
-    switch (availability) {
+    // Prefer the upstream/live label when present (e.g. "Operational", "Unavailable"),
+    // but keep availability for filtering and colors.
+    if (station.statusLabel && station.statusLabel !== "Status unknown") {
+      return station.statusLabel;
+    }
+
+    switch (station.availability) {
       case "available":
         return "Available";
       case "occupied":
@@ -38,7 +43,7 @@ const ChargingStationList = ({
       case "out_of_service":
         return "Out of service";
       default:
-        return station.statusLabel || "Status unknown";
+        return "Status unknown";
     }
   };
 
