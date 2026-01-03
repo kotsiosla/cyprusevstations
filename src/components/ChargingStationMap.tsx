@@ -313,6 +313,30 @@ export default function ChargingStationMap({
         </div>`
       : "";
 
+    const ocmHtml = selectedStation.ocm
+      ? `<div class="text-xs mt-2">
+          <div class="font-medium mb-1">Related information</div>
+          <div style="display:flex; flex-direction:column; gap:4px;">
+            ${
+              selectedStation.ocm.usageType || selectedStation.ocm.isMembershipRequired !== undefined
+                ? `<div>${escapeHtml(
+                    `${selectedStation.ocm.usageType ?? "Access"}${
+                      selectedStation.ocm.isMembershipRequired ? " · Membership required" : ""
+                    }`
+                  )}</div>`
+                : ""
+            }
+            ${selectedStation.ocm.openingTimes ? `<div>Opening hours: ${escapeHtml(selectedStation.ocm.openingTimes)}</div>` : ""}
+            ${
+              selectedStation.ocm.usageCost
+                ? `<div>Cost: ${escapeHtml(selectedStation.ocm.usageCost)}</div>`
+                : ""
+            }
+            <div>Data: OpenChargeMap (CC BY 4.0)</div>
+          </div>
+        </div>`
+      : "";
+
     popupRef.current?.remove();
     popupRef.current = new maplibregl.Popup({ offset: 20 })
       .setLngLat(selectedStation.coordinates)
@@ -331,6 +355,7 @@ export default function ChargingStationMap({
             : "") +
           `<div class="text-xs mt-1">${availabilityLabel}</div>` +
           portsHtml +
+          ocmHtml +
           (selectedStation.openingHours
             ? `<div class="text-xs text-muted-foreground">${escapeHtml(selectedStation.openingHours)}</div>`
             : "")

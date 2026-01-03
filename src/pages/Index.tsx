@@ -5,6 +5,7 @@ import StatsSection from '@/components/StatsSection';
 import ChargingStationMap from '@/components/ChargingStationMap';
 import ChargingStationList from '@/components/ChargingStationList';
 import { fetchChargingStations, sampleChargingStations, ChargingStation } from '@/lib/chargingStations';
+import { fetchOpenChargeMapDetailsByCoords } from '@/lib/openChargeMap';
 import { Helmet } from 'react-helmet-async';
 import { BatteryCharging, Heart, MapPin, Navigation } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -44,6 +45,28 @@ const Index = () => {
 
     loadStations();
   }, []);
+
+  useEffect(() => {
+    const loadOcm = async () => {
+      if (!selectedStation) return;
+      if (selectedStation.ocm) return;
+      try {
+        const [lon, lat] = selectedStation.coordinates;
+        const details = await fetchOpenChargeMapDetailsByCoords(lat, lon);
+        if (!details) return;
+        setStations((prev) =>
+          prev.map((station) =>
+            station.id === selectedStation.id ? { ...station, ocm: details } : station
+          )
+        );
+        setSelectedStation((prev) => (prev?.id === selectedStation.id ? { ...prev, ocm: details } : prev));
+      } catch (error) {
+        console.warn('Failed to load OpenChargeMap details:', error);
+      }
+    };
+
+    loadOcm();
+  }, [selectedStation]);
 
   const connectorOptions = useMemo(() => {
     const connectors = new Set<string>();

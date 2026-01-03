@@ -20,6 +20,15 @@ export interface ChargingStation {
   name: string;
   osmName?: string;
   placeToPlugName?: string;
+  ocm?: {
+    usageType?: string;
+    isMembershipRequired?: boolean;
+    usageCost?: string;
+    accessComments?: string;
+    openingTimes?: string;
+    dataProvider?: string;
+    dataProviderUrl?: string;
+  };
   operator?: string;
   address?: string;
   city?: string;
